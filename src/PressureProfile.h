@@ -18,7 +18,7 @@ struct Phase
 struct CurrentPhase
 {
     short phaseIndex;
-    unsigned long timeInPhase;
+    long timeInPhase;
 };
 
 struct Phases
@@ -29,7 +29,7 @@ struct Phases
     CurrentPhase getCurrentPhase(long timeInPP)
     {
         short phase = 0;
-        unsigned long accumulatedTime = 0;
+        long accumulatedTime = 0L;
 
         while (phase < count - 1 && timeInPP >= accumulatedTime + (phases[phase].durationMs))
         {

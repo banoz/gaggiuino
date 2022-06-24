@@ -1,7 +1,9 @@
-// #define SINGLE_HX711_CLOCK
-#define DEBUG_ENABLED
+#define SINGLE_HX711_CLOCK
+// #define DEBUG_ENABLED
 // #define MAX31855_ENABLED
-#define TIMERINTERRUPT_ENABLED
+// #define TIMERINTERRUPT_ENABLED
+#define FRADC_ENABLED
+
 #if defined(DEBUG_ENABLED) && defined(ARDUINO_ARCH_STM32)
   #include "dbg.h"
 #endif
@@ -27,20 +29,21 @@
 
 #if defined(ARDUINO_ARCH_AVR)
   // ATMega32P pins definitions
-  #define zcPin 2
+  #define zcPin 3
   #define thermoDO 4
   #define thermoCS 5
   #define thermoCLK 6
-  #define steamPin 7
-  #define relayPin 8  // PB0
-  #define dimmerPin 9
-  #define valvePin -1
-  #define brewPin A0 // PD7
-  #define pressurePin A1
-  #define HX711_dout_1 12 //mcu > HX711 no 1 dout pin
-  #define HX711_dout_2 13 //mcu > HX711 no 2 dout pin
-  #define HX711_sck_1 10 //mcu > HX711 no 1 sck pin
-  #define HX711_sck_2 11 //mcu > HX711 no 2 sck pin
+  #define steamPin A7
+  #define relayPin 11  // PB3
+  #define relayPortPin PB3
+  #define dimmerPin 10 // PB2
+  #define valvePin 9  // PB1
+  #define brewPin A6
+  #define pressurePin A0
+  #define HX711_dout_1 A2 //mcu > HX711 no 1 dout pin
+  #define HX711_dout_2 A3 //mcu > HX711 no 2 dout pin
+  #define HX711_sck_1 A1 //mcu > HX711 no 1 sck pin
+  #define HX711_sck_2 -1 //mcu > HX711 no 2 sck pin
   #define USART_CH Serial
 
   #if defined(TIMERINTERRUPT_ENABLED)
@@ -60,24 +63,27 @@
     #include <TimerInterrupt_Generic.h>
 
     void initPressure(int);
+  #elif defined(FRADC_ENABLED)
+    void initFRADC();
+    void readNextADC();
   #endif
 
 #elif defined(ARDUINO_ARCH_STM32)// if arch is stm32
   // STM32F4 pins definitions
-  #define zcPin PA15
-  #define thermoDO PA5 //PB4
-  #define thermoCS PA6 //PB5
-  #define thermoCLK PA7 //PB6
-  #define brewPin PA11 // PD7
-  #define relayPin PB9  // PB0
-  #define dimmerPin PB3
+  #define zcPin PA0
+  #define thermoDO PB14
+  #define thermoCS PB12
+  #define thermoCLK PB13
+  #define brewPin PB1
+  #define relayPin PA6
+  #define dimmerPin PB8
   #define valvePin PC15
   #define pressurePin ADS115_A0 //set here just for reference
-  #define steamPin PA12
-  #define HX711_sck_1 PB0 //mcu > HX711 no 1 sck pin
-  #define HX711_sck_2 PB1 //mcu > HX711 no 2 sck pin
-  #define HX711_dout_1 PA1 //mcu > HX711 no 1 dout pin
-  #define HX711_dout_2 PA2 //mcu > HX711 no 2 dout pin
+  #define steamPin PB0
+  #define HX711_sck_1 PA1 //mcu > HX711 no 1 sck pin
+  #define HX711_sck_2 -1 // no connection
+  #define HX711_dout_1 PA2 //mcu > HX711 no 1 dout pin
+  #define HX711_dout_2 PA3 //mcu > HX711 no 2 dout pin
   #define USART_CH Serial1
   //#define // USART_CH1 Serial
 #endif
@@ -96,14 +102,18 @@
 #define PUMP_RANGE 127
 #if defined(ARDUINO_ARCH_AVR)
   #define ZC_MODE FALLING
+  #define ZC_DIVIDER 1
 #elif defined(ARDUINO_ARCH_STM32)
   #define ZC_MODE RISING
+  #define ZC_DIVIDER 2
 #endif
 
 #if defined(ARDUINO_ARCH_STM32)// if arch is stm32
 //If additional USART ports want ti eb used thy should be enable first
 //HardwareSerial USART_CH(PA10, PA9);
-ADS1115 ADS(0x48);
+  TwoWire Wire2(PB3, PB10);
+
+  ADS1115 ADS(0x48, &Wire2);
 #endif
 //Init the thermocouples with the appropriate pins defined above with the prefix "thermo"
 #if defined(ADAFRUIT_MAX31855_H)
@@ -114,7 +124,7 @@ ADS1115 ADS(0x48);
 // EasyNextion object init
 EasyNex myNex(USART_CH);
 //Banoz PSM - for more cool shit visit https://github.com/banoz  and don't forget to star
-PSM pump(zcPin, dimmerPin, PUMP_RANGE, ZC_MODE);
+PSM pump(zcPin, dimmerPin, PUMP_RANGE, ZC_MODE, ZC_DIVIDER);
 //#######################__HX711_stuff__##################################
 #if defined(SINGLE_HX711_CLOCK)
 HX711_2 LoadCells;
@@ -140,15 +150,15 @@ volatile float liveWeight;
 
 //scales vars
 /* If building for STM32 define the scales factors here */
-float scalesF1 = -4183.14f; // 3,911.142856
-float scalesF2 = 3911.14f; // -4,183.142856
+float scalesF1 = 2407.5f;
+float scalesF2 = 2382.0f;
 float currentWeight;
 float previousWeight;
 float flowVal;
 
 //int tarcalculateWeight;
 bool weighingStartRequested;
-bool scalesPresent;
+bool scalesPresent = false;
 bool tareDone;
 
 // brew detection vars
@@ -250,22 +260,32 @@ void setup() {
     delay(100);
   }
 
+  myNex.writeStr("splashText.txt", "EEPROM init...");
+
   // USART_CH1.println("Init step 5");
   // Initialising the vsaved values or writing defaults if first start
   eepromInit();
 
+  myNex.writeStr("splashText.txt", "Pressure reading init...");
+
   #if defined(ARDUINO_ARCH_AVR) && defined(TIMERINTERRUPT_GENERIC_H)
     initPressure(myNex.readNumber("regHz"));
+  #elif defined(ARDUINO_ARCH_AVR) && defined(FRADC_ENABLED)
+    initFRADC();
   #endif
 
   #if defined(ADAFRUIT_MAX31855_H)
     thermocouple.begin();
   #endif
 
+  myNex.writeStr("splashText.txt", "Scales init...");
+
   // Scales handling
   scalesInit();
   myNex.lastCurrentPageId = myNex.currentPageId;
   POWER_ON = true;
+
+  regionHz = pump.cps();
 
   // USART_CH1.println("Init step 6");
 }
@@ -277,6 +297,7 @@ void setup() {
 
 //Main loop where all the logic is continuously run
 void loop() {
+  //myNex.writeNum("debug1",pump.cps());
   pageValuesRefresh();
   myNex.NextionListen();
   sensorsRead();
@@ -289,6 +310,18 @@ void loop() {
 //#############################################___________SENSORS_READ________##################################################
 //##############################################################################################################################
 
+uint32_t getNextMillis(uint32_t offset)
+{
+  if (millis() > pump.getLastMillis() + 200)
+  {
+    #if defined(FRADC_ENABLED)
+      readNextADC();
+    #endif
+    return millis() + offset;
+  }
+
+  return pump.getLastMillis() + offset;
+}
 
 void sensorsRead() { // Reading the thermocouple temperature
   // static long thermoTimer;
@@ -308,24 +341,18 @@ void sensorsRead() { // Reading the thermocouple temperature
         thermoTimer = millis() + GET_KTYPE_READ_EVERY;
       }
     }
-    thermoTimer = millis() + GET_KTYPE_READ_EVERY;
+    thermoTimer = getNextMillis(GET_KTYPE_READ_EVERY);
   }
 
   // Read pressure and store in a global var for further controls
-  #if defined(TIMERINTERRUPT_GENERIC_H)
+  #if defined(TIMERINTERRUPT_GENERIC_H) || defined(FRADC_ENABLED)
     livePressure = getPressure();
   #else
     if (millis() > pressureTimer) {
       livePressure = getPressure();
-      pressureTimer = millis() + GET_PRESSURE_READ_EVERY;
+      pressureTimer = getNextMillis(GET_PRESSURE_READ_EVERY);
     }
   #endif
-}
-
-void calculateWeight() {
-  // static long scalesTimer;
-
-  scalesTare(); //Tare at the start of any weighing cycle
 
   // Weight output
   if (millis() > scalesTimer) {
@@ -344,8 +371,15 @@ void calculateWeight() {
       // Resume pumping
       //pump.set(pumpValue);
     }
-    scalesTimer = millis() + GET_SCALES_READ_EVERY;
+    scalesTimer = getNextMillis(GET_SCALES_READ_EVERY);
   }
+}
+
+void calculateWeight() {
+  // static long scalesTimer;
+
+  scalesTare(); //Tare at the start of any weighing cycle
+
   calculateFlow();
 }
 
@@ -380,6 +414,37 @@ void calculateFlow() {
     ITimer1.init();
     ITimer1.attachInterrupt(hz * 2, presISR);
   }
+#elif defined(ARDUINO_ARCH_AVR) && defined(FRADC_ENABLED)
+  volatile char adcData[4];
+  volatile char adcInput[4];
+  volatile int adcIndex = 0;
+  
+  void readNextADC() {
+    adcData[adcIndex] = ADCH;
+    
+    adcIndex++;
+
+    if (adcIndex > 3) {
+      adcIndex = 0;
+    }
+
+    ADMUX = (1 << REFS0) | (1 << ADLAR) | (adcInput[adcIndex] & 0b00001111);
+  }
+
+  void initFRADC() {
+    ADMUX =  (1 << REFS0) | (1 << ADLAR) | 0b00001111;
+    ADCSRB = (1 << ACME);
+    ADCSRA = (1 << ADEN) | (1 << ADSC) | (1 << ADATE) | (1 << ADPS1);
+
+    adcInput[0] = 0x08; // internal temperature sensor
+    adcInput[1] = pressurePin - 14U;
+    adcInput[2] = brewPin - 14U;
+    adcInput[3] = steamPin - 14U;
+  }
+
+  void onPSMInterrupt() {
+    readNextADC();
+  }
 #endif
 
 float getPressure() {  //returns sensor pressure data
@@ -393,22 +458,28 @@ float getPressure() {  //returns sensor pressure data
     #if defined(ARDUINO_ARCH_AVR)
       #if defined(TIMERINTERRUPT_GENERIC_H)
         return (presData[0] + presData[1]) / 136.54f - 1.49f;
+      #elif defined(FRADC_ENABLED)
+        return (float)((uint8_t)adcData[1] - (uint8_t)25U) / 17.0f;
       #else
         return analogRead(pressurePin) / 68.0F - 1.5F;
       #endif
     #elif defined(ARDUINO_ARCH_STM32)
-      return ADS.getValue() / 1706.6f - 1.49f;
+      int16_t adcValue = ADS.getValue();
+      if (adcValue == 0){
+        ads1115Init();        
+        adcValue = ADS.getValue();
+      }
+      return adcValue / 1706.6f - 1.49f;
     #endif
 }
 
 void setPressure(float targetValue) {
   int pumpValue;
   float diff = targetValue - livePressure;
-
-  if (targetValue == 0 || livePressure > targetValue) {
+    
+  if (diff <= 0) {
     pumpValue = 0;
   } else {
-    float diff = targetValue - livePressure;
     pumpValue = PUMP_RANGE / (1.f + exp(1.7f - diff/0.9f));
   }
 
@@ -546,8 +617,8 @@ void justDoCoffee() {
         heaterState=false;
         heaterWave=millis();
       }
-    } else if(kProbeReadValue <= setPoint-1.5f) {
-    setBoiler(HIGH);
+    } else if (kProbeReadValue <= ((float)setPoint - 1.5f)) {
+      setBoiler(HIGH);
     } else {
       setBoiler(LOW);
     }
@@ -556,24 +627,14 @@ void justDoCoffee() {
     //brewTimer(0);
     if (kProbeReadValue < ((float)setPoint - 10.00f)) {
       setBoiler(HIGH);
-    } else if (kProbeReadValue >= ((float)setPoint - 10.00f) && kProbeReadValue < ((float)setPoint - 3.00f)) {
+    } else if (kProbeReadValue < ((float)setPoint - 3.00f)) {
       setBoiler(HIGH);
       if (millis() - heaterWave > HPWR_OUT/BrewCycleDivider) {
         setBoiler(LOW);
         heaterState=false;
         heaterWave=millis();
       }
-    } else if ((kProbeReadValue >= ((float)setPoint - 3.00f)) && (kProbeReadValue <= ((float)setPoint - 1.00f))) {
-      if (millis() - heaterWave > HPWR_OUT/BrewCycleDivider && !heaterState) {
-        setBoiler(HIGH);
-        heaterState=true;
-        heaterWave=millis();
-      } else if (millis() - heaterWave > HPWR_OUT/BrewCycleDivider && heaterState ) {
-        setBoiler(LOW);
-        heaterState=false;
-        heaterWave=millis();
-      }
-    } else if ((kProbeReadValue >= ((float)setPoint - 0.5f)) && kProbeReadValue < (float)setPoint) {
+    } else if (kProbeReadValue < (float)setPoint) {
       if (millis() - heaterWave > HPWR_OUT/BrewCycleDivider && !heaterState ) {
         setBoiler(HIGH);
         heaterState=true;
@@ -819,12 +880,24 @@ void trigger3() {
 
 //Function to get the state of the brew switch button
 bool brewState() {
-  return digitalRead(brewPin) == LOW; // pin will be low when switch is ON.
+  #if defined(ARDUINO_ARCH_AVR) && defined(FRADC_ENABLED)
+    return (uint8_t)adcData[2] < 128U;
+  #elif defined(ARDUINO_ARCH_AVR)
+    return analogRead(brewPin) < 128;
+  #else
+    return digitalRead(brewPin) == LOW; // pin will be low when switch is ON.
+  #endif
 }
 
 //Function to get the state of the steam switch button
 bool steamState() {
-  return digitalRead(steamPin) == LOW; // pin will be low when switch is ON.
+  #if defined(ARDUINO_ARCH_AVR) && defined(FRADC_ENABLED)
+    return (uint8_t)adcData[3] < 128U;
+  #elif defined(ARDUINO_ARCH_AVR)
+    return analogRead(steamPin) < 128;
+  #else
+    return digitalRead(steamPin) == LOW; // pin will be low when switch is ON.
+  #endif
 }
 
 void brewTimer(bool c) { // small function for easier timer start/stop
@@ -837,12 +910,12 @@ void setBoiler(int val) {
   #if defined(ARDUINO_ARCH_AVR)
   // USART_CH1.println("SET_BOILER AVR BLOCK BEGIN");
     if (val == HIGH) {
-      PORTB |= _BV(PB0);  // boilerPin -> HIGH
+      PORTB |= _BV(relayPortPin);  // boilerPin -> HIGH
     } else {
-      PORTB &= ~_BV(PB0);  // boilerPin -> LOW
+      PORTB &= ~_BV(relayPortPin);  // boilerPin -> LOW
     }
   // USART_CH1.println("SET_BOILER AVR BLOCK END");
-  #elif defined(ARDUINO_ARCH_STM32)// if arch is stm32
+  #else
   // USART_CH1.println("SET_BOILER STM32 BLOCK BEGIN");
     if (val == HIGH) {
       digitalWrite(relayPin, HIGH);  // boilerPin -> HIGH
@@ -971,8 +1044,7 @@ void newPressureProfile() {
     CurrentPhase currentPhase = phases.getCurrentPhase(timeInPP);
     newBarValue = phases.phases[currentPhase.phaseIndex].getPressure(currentPhase.timeInPhase);
     preinfusionFinished = currentPhase.phaseIndex >= preInfusionFinishedPhaseIdx;
-  }
-  else {
+  } else {
     newBarValue = 0.0f;
   }
   setPressure(newBarValue);
@@ -1231,15 +1303,16 @@ void valuesLoadFromEEPROM() {
     myNex.writeNum("morePower.bt0.val", init_val);
   }
   // Scales values
-  EEPROM.get(EEP_SCALES_F1, scalesF1);//reading scale factors value from eeprom
-  EEPROM.get(EEP_SCALES_F2, scalesF2);//reading scale factors value from eeprom
+  //EEPROM.get(EEP_SCALES_F1, scalesF1);//reading scale factors value from eeprom
+  //EEPROM.get(EEP_SCALES_F2, scalesF2);//reading scale factors value from eeprom
 }
 
 void ads1115Init() {
 #if defined(ARDUINO_ARCH_STM32)
   ADS.begin();
+  ADS.setWireClock(400000);
   ADS.setGain(0);      // 6.144 volt
-  ADS.setDataRate(7);  // fast
+  ADS.setDataRate(5);  // 250 SPS
   ADS.setMode(0);      // continuous mode
   ADS.readADC(0);      // first read to trigger
 #endif
@@ -1250,8 +1323,8 @@ void pinInit() {
   pinMode(valvePin, OUTPUT);
   pinMode(brewPin, INPUT_PULLUP);
   pinMode(steamPin, INPUT_PULLUP);
-  pinMode(HX711_dout_1, INPUT_PULLUP);
-  pinMode(HX711_dout_2, INPUT_PULLUP);
+  //pinMode(HX711_dout_1, INPUT_PULLUP);
+  //pinMode(HX711_dout_2, INPUT_PULLUP);
 }
 
 void dbgInit() {
