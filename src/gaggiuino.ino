@@ -418,7 +418,8 @@ void calculateFlow() {
   volatile char adcData[4];
   volatile char adcInput[4];
   volatile int adcIndex = 0;
-  
+  bool adcInitialized = false;
+
   void readNextADC() {
     adcData[adcIndex] = ADCH;
     
@@ -440,10 +441,24 @@ void calculateFlow() {
     adcInput[1] = pressurePin - 14U;
     adcInput[2] = brewPin - 14U;
     adcInput[3] = steamPin - 14U;
+
+    delay(5);
+    readNextADC();
+    delay(5);
+    readNextADC();
+    delay(5);
+    readNextADC();
+    delay(5);
+    readNextADC();
+    delay(5);
+
+    adcInitialized = true;
   }
 
   void onPSMInterrupt() {
-    readNextADC();
+    if (adcInitialized) {
+      readNextADC();
+    }
   }
 #endif
 
@@ -459,7 +474,7 @@ float getPressure() {  //returns sensor pressure data
       #if defined(TIMERINTERRUPT_GENERIC_H)
         return (presData[0] + presData[1]) / 136.54f - 1.49f;
       #elif defined(FRADC_ENABLED)
-        return (float)((uint8_t)adcData[1] - (uint8_t)25U) / 17.0f;
+        return adcInitialized ? (float)((uint8_t)adcData[1] - (uint8_t)25U) / 17.0f : 0.0f;
       #else
         return analogRead(pressurePin) / 68.0F - 1.5F;
       #endif
@@ -881,7 +896,7 @@ void trigger3() {
 //Function to get the state of the brew switch button
 bool brewState() {
   #if defined(ARDUINO_ARCH_AVR) && defined(FRADC_ENABLED)
-    return (uint8_t)adcData[2] < 128U;
+    return adcInitialized ? (uint8_t)adcData[2] < 128U : false;
   #elif defined(ARDUINO_ARCH_AVR)
     return analogRead(brewPin) < 128;
   #else
@@ -892,7 +907,7 @@ bool brewState() {
 //Function to get the state of the steam switch button
 bool steamState() {
   #if defined(ARDUINO_ARCH_AVR) && defined(FRADC_ENABLED)
-    return (uint8_t)adcData[3] < 128U;
+    return adcInitialized ? (uint8_t)adcData[3] < 128U : false;
   #elif defined(ARDUINO_ARCH_AVR)
     return analogRead(steamPin) < 128;
   #else
@@ -1046,6 +1061,7 @@ void newPressureProfile() {
     preinfusionFinished = currentPhase.phaseIndex >= preInfusionFinishedPhaseIdx;
   } else {
     newBarValue = 0.0f;
+    preinfusionFinished = false;
   }
   setPressure(newBarValue);
   // saving the target pressure
@@ -1321,8 +1337,10 @@ void ads1115Init() {
 void pinInit() {
   pinMode(relayPin, OUTPUT);
   pinMode(valvePin, OUTPUT);
-  pinMode(brewPin, INPUT_PULLUP);
-  pinMode(steamPin, INPUT_PULLUP);
+  #if !defined(FRADC_ENABLED)
+    pinMode(brewPin, INPUT_PULLUP);
+    pinMode(steamPin, INPUT_PULLUP);
+  #endif
   //pinMode(HX711_dout_1, INPUT_PULLUP);
   //pinMode(HX711_dout_2, INPUT_PULLUP);
 }
