@@ -363,41 +363,54 @@ void calculateFlow() {
 //############################################______PRESSURE_____TRANSDUCER_____################################################
 //##############################################################################################################################
 #if defined(ARDUINO_ARCH_AVR) && defined(TIMERINTERRUPT_GENERIC_H)
-  volatile int presData[2];
-  volatile char presIndex = 0;
+  volatile char adcData[2];
+  volatile char adcInput[2];
+  volatile int adcIndex = 0;
+  bool adcInitialized = false;
 
-  void presISR() {
-    presData[presIndex] = ADCW;
-    presIndex ^= 1;
+  void adcISR() {
+    adcData[adcIndex] = ADCH;
+    
+    adcIndex++;
+
+    if (adcIndex > 1) {
+      adcIndex = 0;
+    }
+
+    ADMUX = (1 << REFS0) | (1 << ADLAR) | (adcInput[adcIndex] & 0b00001111);
   }
 
   void initPressure(int hz) {
-    int pin = pressurePin - 14;
-    ADMUX = (DEFAULT << 6) | (pin & 0x07);
+    ADMUX =  (1 << REFS0) | (1 << ADLAR) | 0b00001111;
     ADCSRB = (1 << ACME);
-    ADCSRA = (1 << ADEN) | (1 << ADSC) | (1 << ADATE) | (1 << ADPS2) | (1 << ADPS1) | (1 << ADPS0);
+    ADCSRA = (1 << ADEN) | (1 << ADSC) | (1 << ADATE) | (1 << ADPS1);
+
+    adcInput[0] = 0x08; // internal temperature sensor
+    adcInput[1] = pressurePin - 14U;
+
+    adcInitialized = true;
 
     ITimer1.init();
-    ITimer1.attachInterrupt(hz * 2, presISR);
+    ITimer1.attachInterrupt(hz * 2, adcISR);
   }
 #endif
 
 float getPressure() {  //returns sensor pressure data
-    // 5V/1024 = 1/204.8 (10 bit) or 6553.6 (15 bit)
-    // voltageZero = 0.5V --> 102.4(10 bit) or 3276.8 (15 bit)
-    // voltageMax = 4.5V --> 921.6 (10 bit) or 29491.2 (15 bit)
-    // range 921.6 - 102.4 = 819.2 or 26214.4
+    // 5V/1024 = 1/51.2 (8 bit) or 1/204.8 (10 bit) or 6553.6 (15 bit)
+    // voltageZero = 0.5V --> 25.6 (8 bit) or 102.4 (10 bit) or 3276.8 (15 bit)
+    // voltageMax = 4.5V --> 230.4 (8 bit) or 921.6 (10 bit) or 29491.2 (15 bit)
+    // range 921.6 - 102.4 = 204.8 or 819.2 or 26214.4
     // pressure gauge range 0-1.2MPa - 0-12 bar
-    // 1 bar = 68.27 or 2184.5
+    // 1 bar = 17.1 or 68.27 or 2184.5
 
     #if defined(ARDUINO_ARCH_AVR)
       #if defined(TIMERINTERRUPT_GENERIC_H)
-        return (presData[0] + presData[1]) / 136.54f - 1.49f;
+        return adcInitialized ? (float)((uint8_t)adcData[1] - 25) / 17.1f : 0.0f;
       #else
-        return analogRead(pressurePin) / 68.0F - 1.5F;
+        return (analogRead(pressurePin) - 102) / 68.27f;
       #endif
     #elif defined(ARDUINO_ARCH_STM32)
-      return ADS.getValue() / 1706.6f - 1.49f;
+      return (ADS.getValue() - 3276) / 2184.5f;
     #endif
 }
 
