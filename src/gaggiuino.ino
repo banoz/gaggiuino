@@ -1,5 +1,5 @@
-// #define SINGLE_HX711_CLOCK
-#define DEBUG_ENABLED
+#define SINGLE_HX711_CLOCK
+// #define DEBUG_ENABLED
 // #define MAX31855_ENABLED
 #define TIMERINTERRUPT_ENABLED
 #if defined(DEBUG_ENABLED) && defined(ARDUINO_ARCH_STM32)
@@ -27,20 +27,20 @@
 
 #if defined(ARDUINO_ARCH_AVR)
   // ATMega32P pins definitions
-  #define zcPin 2
+  #define zcPin 3
   #define thermoDO 4
   #define thermoCS 5
   #define thermoCLK 6
-  #define steamPin 7
-  #define relayPin 8  // PB0
-  #define dimmerPin 9
-  #define valvePin 3
-  #define brewPin A0 // PD7
-  #define pressurePin A1
-  #define HX711_dout_1 12 //mcu > HX711 no 1 dout pin
-  #define HX711_dout_2 13 //mcu > HX711 no 2 dout pin
-  #define HX711_sck_1 10 //mcu > HX711 no 1 sck pin
-  #define HX711_sck_2 11 //mcu > HX711 no 2 sck pin
+  #define steamPin A7
+  #define relayPin 11  // PB3
+  #define dimmerPin 10 // PB2
+  #define valvePin 9  // PB1
+  #define brewPin A6
+  #define pressurePin A0
+  #define HX711_dout_1 A2 //mcu > HX711 no 1 dout pin
+  #define HX711_dout_2 A3 //mcu > HX711 no 2 dout pin
+  #define HX711_sck_1 A1 //mcu > HX711 no 1 sck pin
+  #define HX711_sck_2 -1 //mcu > HX711 no 2 sck pin
   #define USART_CH Serial
 
   #if defined(TIMERINTERRUPT_ENABLED)
@@ -64,20 +64,20 @@
 
 #elif defined(ARDUINO_ARCH_STM32)// if arch is stm32
   // STM32F4 pins definitions
-  #define zcPin PA15
-  #define thermoDO PA5 //PB4
-  #define thermoCS PA6 //PB5
-  #define thermoCLK PA7 //PB6
-  #define brewPin PA11 // PD7
-  #define relayPin PB9  // PB0
-  #define dimmerPin PB3
+  #define zcPin PA0
+  #define thermoDO PB14
+  #define thermoCS PB12
+  #define thermoCLK PB13
+  #define brewPin PB1
+  #define relayPin PA6
+  #define dimmerPin PB8
   #define valvePin PC15
   #define pressurePin ADS115_A0 //set here just for reference
-  #define steamPin PA12
-  #define HX711_sck_1 PB0 //mcu > HX711 no 1 sck pin
-  #define HX711_sck_2 PB1 //mcu > HX711 no 2 sck pin
-  #define HX711_dout_1 PA1 //mcu > HX711 no 1 dout pin
-  #define HX711_dout_2 PA2 //mcu > HX711 no 2 dout pin
+  #define steamPin PB0
+  #define HX711_sck_1 PA1 //mcu > HX711 no 1 sck pin
+  #define HX711_sck_2 -1 // no connection
+  #define HX711_dout_1 PA2 //mcu > HX711 no 1 dout pin
+  #define HX711_dout_2 PA3 //mcu > HX711 no 2 dout pin
   #define USART_CH Serial1
   //#define // USART_CH1 Serial
 #endif
@@ -96,14 +96,18 @@
 #define PUMP_RANGE 127
 #if defined(ARDUINO_ARCH_AVR)
   #define ZC_MODE FALLING
+  #define ZC_DIVIDER 1
 #elif defined(ARDUINO_ARCH_STM32)
   #define ZC_MODE RISING
+  #define ZC_DIVIDER 2
 #endif
 
 #if defined(ARDUINO_ARCH_STM32)// if arch is stm32
 //If additional USART ports want ti eb used thy should be enable first
 //HardwareSerial USART_CH(PA10, PA9);
-ADS1115 ADS(0x48);
+  TwoWire Wire2(PB3, PB10);
+
+  ADS1115 ADS(0x48, &Wire2);
 #endif
 //Init the thermocouples with the appropriate pins defined above with the prefix "thermo"
 #if defined(ADAFRUIT_MAX31855_H)
@@ -114,7 +118,7 @@ ADS1115 ADS(0x48);
 // EasyNextion object init
 EasyNex myNex(USART_CH);
 //Banoz PSM - for more cool shit visit https://github.com/banoz  and don't forget to star
-PSM pump(zcPin, dimmerPin, PUMP_RANGE, ZC_MODE);
+PSM pump(zcPin, dimmerPin, PUMP_RANGE, ZC_MODE, ZC_DIVIDER);
 //#######################__HX711_stuff__##################################
 #if defined(SINGLE_HX711_CLOCK)
 HX711_2 LoadCells;
@@ -363,8 +367,8 @@ void calculateFlow() {
 //############################################______PRESSURE_____TRANSDUCER_____################################################
 //##############################################################################################################################
 #if defined(ARDUINO_ARCH_AVR) && defined(TIMERINTERRUPT_GENERIC_H)
-  volatile char adcData[2];
-  volatile char adcInput[2];
+  volatile char adcData[4];
+  volatile char adcInput[4];
   volatile int adcIndex = 0;
   bool adcInitialized = false;
 
@@ -373,7 +377,7 @@ void calculateFlow() {
     
     adcIndex++;
 
-    if (adcIndex > 1) {
+    if (adcIndex > 3) {
       adcIndex = 0;
     }
 
@@ -387,6 +391,8 @@ void calculateFlow() {
 
     adcInput[0] = 0x08; // internal temperature sensor
     adcInput[1] = pressurePin - 14U;
+    adcInput[2] = brewPin - 14U;
+    adcInput[3] = steamPin - 14U;
 
     adcInitialized = true;
 
@@ -832,12 +838,20 @@ void trigger3() {
 
 //Function to get the state of the brew switch button
 bool brewState() {
-  return digitalRead(brewPin) == LOW; // pin will be low when switch is ON.
+  #if defined(ARDUINO_ARCH_AVR) && defined(TIMERINTERRUPT_ENABLED)
+    return adcInitialized ? (uint8_t)adcData[2] < 128U : false;
+  #else
+    return digitalRead(brewPin) == LOW; // pin will be low when switch is ON.
+  #endif
 }
 
 //Function to get the state of the steam switch button
 bool steamState() {
-  return digitalRead(steamPin) == LOW; // pin will be low when switch is ON.
+  #if defined(ARDUINO_ARCH_AVR) && defined(TIMERINTERRUPT_ENABLED)
+    return adcInitialized ? (uint8_t)adcData[3] < 128U : false;
+  #else
+    return digitalRead(steamPin) == LOW; // pin will be low when switch is ON.
+  #endif
 }
 
 void brewTimer(bool c) { // small function for easier timer start/stop
@@ -850,9 +864,9 @@ void setBoiler(int val) {
   #if defined(ARDUINO_ARCH_AVR)
   // USART_CH1.println("SET_BOILER AVR BLOCK BEGIN");
     if (val == HIGH) {
-      PORTB |= _BV(PB0);  // boilerPin -> HIGH
+      PORTB |= _BV(PB3);  // boilerPin -> HIGH
     } else {
-      PORTB &= ~_BV(PB0);  // boilerPin -> LOW
+      PORTB &= ~_BV(PB3);  // boilerPin -> LOW
     }
   // USART_CH1.println("SET_BOILER AVR BLOCK END");
   #elif defined(ARDUINO_ARCH_STM32)// if arch is stm32
@@ -1261,10 +1275,12 @@ void ads1115Init() {
 void pinInit() {
   pinMode(relayPin, OUTPUT);
   pinMode(valvePin, OUTPUT);
-  pinMode(brewPin, INPUT_PULLUP);
-  pinMode(steamPin, INPUT_PULLUP);
-  pinMode(HX711_dout_1, INPUT_PULLUP);
-  pinMode(HX711_dout_2, INPUT_PULLUP);
+  #if !defined(TIMERINTERRUPT_ENABLED)
+    pinMode(brewPin, INPUT_PULLUP);
+    pinMode(steamPin, INPUT_PULLUP);
+  #endif
+  //pinMode(HX711_dout_1, INPUT_PULLUP);
+  //pinMode(HX711_dout_2, INPUT_PULLUP);
 }
 
 void dbgInit() {
