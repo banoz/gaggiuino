@@ -1,7 +1,7 @@
 #define SINGLE_HX711_CLOCK
 // #define DEBUG_ENABLED
 // #define MAX31855_ENABLED
-#define TIMERINTERRUPT_ENABLED
+#define ADCINTERRUPT_ENABLED
 #if defined(DEBUG_ENABLED) && defined(ARDUINO_ARCH_STM32)
   #include "dbg.h"
 #endif
@@ -43,23 +43,9 @@
   #define HX711_sck_2 -1 //mcu > HX711 no 2 sck pin
   #define USART_CH Serial
 
-  #if defined(TIMERINTERRUPT_ENABLED)
-    // configuration for TimerInterruptGeneric
-    #define TIMER_INTERRUPT_DEBUG 0
-    #define _TIMERINTERRUPT_LOGLEVEL_ 0
-
-    #define USING_16MHZ true
-    #define USING_8MHZ false
-    #define USING_250KHZ false
-
-    #define USE_TIMER_0 false
-    #define USE_TIMER_1 true
-    #define USE_TIMER_2 false
-    #define USE_TIMER_3 false
-
-    #include <TimerInterrupt_Generic.h>
-
-    void initPressure(int);
+  #if defined(ADCINTERRUPT_ENABLED)
+    void initPressure();
+    void adcISR();
   #endif
 
 #elif defined(ARDUINO_ARCH_STM32)// if arch is stm32
@@ -258,8 +244,8 @@ void setup() {
   // Initialising the vsaved values or writing defaults if first start
   eepromInit();
 
-  #if defined(ARDUINO_ARCH_AVR) && defined(TIMERINTERRUPT_GENERIC_H)
-    initPressure(myNex.readNumber("regHz"));
+  #if defined(ARDUINO_ARCH_AVR) && defined(ADCINTERRUPT_ENABLED)
+    initPressure();
   #endif
 
   #if defined(ADAFRUIT_MAX31855_H)
@@ -293,6 +279,18 @@ void loop() {
 //#############################################___________SENSORS_READ________##################################################
 //##############################################################################################################################
 
+uint32_t getNextMillis(uint32_t offset)
+{
+  if (millis() > pump.getLastMillis() + 200)
+  {
+    #if defined(ADCINTERRUPT_ENABLED)
+      adcISR();
+    #endif
+    return millis() + offset;
+  }
+
+  return pump.getLastMillis() + offset;
+}
 
 void sensorsRead() { // Reading the thermocouple temperature
   // static long thermoTimer;
@@ -312,16 +310,16 @@ void sensorsRead() { // Reading the thermocouple temperature
         thermoTimer = millis() + GET_KTYPE_READ_EVERY;
       }
     }
-    thermoTimer = millis() + GET_KTYPE_READ_EVERY;
+    thermoTimer = getNextMillis(GET_KTYPE_READ_EVERY);
   }
 
   // Read pressure and store in a global var for further controls
-  #if defined(TIMERINTERRUPT_GENERIC_H)
+  #if defined(ADCINTERRUPT_ENABLED)
     livePressure = getPressure();
   #else
     if (millis() > pressureTimer) {
       livePressure = getPressure();
-      pressureTimer = millis() + GET_PRESSURE_READ_EVERY;
+      pressureTimer = getNextMillis(GET_PRESSURE_READ_EVERY);
     }
   #endif
 
@@ -338,7 +336,7 @@ void sensorsRead() { // Reading the thermocouple temperature
         currentWeight = LoadCell_1.get_units() + LoadCell_2.get_units();
       #endif
       
-      scalesTimer = millis() + GET_SCALES_READ_EVERY;
+      scalesTimer = getNextMillis(GET_SCALES_READ_EVERY);
     }
   }
 }
@@ -361,25 +359,27 @@ void calculateFlow() {
 //##############################################################################################################################
 //############################################______PRESSURE_____TRANSDUCER_____################################################
 //##############################################################################################################################
-#if defined(ARDUINO_ARCH_AVR) && defined(TIMERINTERRUPT_GENERIC_H)
+#if defined(ARDUINO_ARCH_AVR) && defined(ADCINTERRUPT_ENABLED)
   volatile char adcData[4];
   volatile char adcInput[4];
   volatile int adcIndex = 0;
   bool adcInitialized = false;
 
   void adcISR() {
-    adcData[adcIndex] = ADCH;
-    
-    adcIndex++;
+    if (adcInitialized) {
+      adcData[adcIndex] = ADCH;
+      
+      adcIndex++;
 
-    if (adcIndex > 3) {
-      adcIndex = 0;
+      if (adcIndex > 3) {
+        adcIndex = 0;
+      }
+
+      ADMUX = (1 << REFS0) | (1 << ADLAR) | (adcInput[adcIndex] & 0b00001111);
     }
-
-    ADMUX = (1 << REFS0) | (1 << ADLAR) | (adcInput[adcIndex] & 0b00001111);
   }
 
-  void initPressure(int hz) {
+  void initPressure() {
     ADMUX =  (1 << REFS0) | (1 << ADLAR) | 0b00001111;
     ADCSRB = (1 << ACME);
     ADCSRA = (1 << ADEN) | (1 << ADSC) | (1 << ADATE) | (1 << ADPS1);
@@ -390,9 +390,10 @@ void calculateFlow() {
     adcInput[3] = steamPin - 14U;
 
     adcInitialized = true;
-
-    ITimer1.init();
-    ITimer1.attachInterrupt(hz * 2, adcISR);
+  }
+  
+  void onPSMInterrupt() {
+    adcISR();
   }
 #endif
 
@@ -405,7 +406,7 @@ float getPressure() {  //returns sensor pressure data
     // 1 bar = 17.1 or 68.27 or 2184.5
 
     #if defined(ARDUINO_ARCH_AVR)
-      #if defined(TIMERINTERRUPT_GENERIC_H)
+      #if defined(ADCINTERRUPT_ENABLED)
         return adcInitialized ? (float)((uint8_t)adcData[1] - 25) / 17.1f : 0.0f;
       #else
         return (analogRead(pressurePin) - 102) / 68.27f;
@@ -833,7 +834,7 @@ void trigger3() {
 
 //Function to get the state of the brew switch button
 bool brewState() {
-  #if defined(ARDUINO_ARCH_AVR) && defined(TIMERINTERRUPT_ENABLED)
+  #if defined(ARDUINO_ARCH_AVR) && defined(ADCINTERRUPT_ENABLED)
     return adcInitialized ? (uint8_t)adcData[2] < 128U : false;
   #elif defined(ARDUINO_ARCH_AVR)
     return analogRead(brewPin) < 128;
@@ -844,7 +845,7 @@ bool brewState() {
 
 //Function to get the state of the steam switch button
 bool steamState() {
-  #if defined(ARDUINO_ARCH_AVR) && defined(TIMERINTERRUPT_ENABLED)
+  #if defined(ARDUINO_ARCH_AVR) && defined(ADCINTERRUPT_ENABLED)
     return adcInitialized ? (uint8_t)adcData[3] < 128U : false;
   #elif defined(ARDUINO_ARCH_AVR)
     return analogRead(steamPin) < 128;
@@ -1000,6 +1001,7 @@ void newPressureProfile() {
   }
   else {
     newBarValue = 0.0f;
+    preinfusionFinished = false;
   }
   setPressure(newBarValue);
   // saving the target pressure
@@ -1274,7 +1276,7 @@ void ads1115Init() {
 void pinInit() {
   pinMode(relayPin, OUTPUT);
   pinMode(valvePin, OUTPUT);
-  #if !defined(TIMERINTERRUPT_ENABLED)
+  #if !defined(ADCINTERRUPT_ENABLED)
     pinMode(brewPin, INPUT_PULLUP);
     pinMode(steamPin, INPUT_PULLUP);
   #endif
@@ -1294,5 +1296,3 @@ void dbgOutput() {
   myNex.writeNum("debug2",ADS.getError());
   #endif
 }
-
-void onPSMInterrupt() {}
