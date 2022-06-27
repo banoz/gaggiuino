@@ -324,18 +324,10 @@ void sensorsRead() { // Reading the thermocouple temperature
       pressureTimer = millis() + GET_PRESSURE_READ_EVERY;
     }
   #endif
-}
-
-void calculateWeight() {
-  // static long scalesTimer;
-
-  scalesTare(); //Tare at the start of any weighing cycle
 
   // Weight output
-  if (millis() > scalesTimer) {
-    if (scalesPresent && weighingStartRequested) {
-      // Stop pump to prevent HX711 critical section from breaking timing
-      //pump.set(0);
+  if (scalesPresent && weighingStartRequested) {
+    if (millis() > scalesTimer) {
       #if defined(SINGLE_HX711_CLOCK)
         if (LoadCells.is_ready()) {
           float values[2];
@@ -345,11 +337,14 @@ void calculateWeight() {
       #else
         currentWeight = LoadCell_1.get_units() + LoadCell_2.get_units();
       #endif
-      // Resume pumping
-      //pump.set(pumpValue);
+      
+      scalesTimer = millis() + GET_SCALES_READ_EVERY;
     }
-    scalesTimer = millis() + GET_SCALES_READ_EVERY;
   }
+}
+
+void calculateWeight() {
+  scalesTare(); //Tare at the start of any weighing cycle
   calculateFlow();
 }
 
