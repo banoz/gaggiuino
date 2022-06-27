@@ -1299,3 +1299,5 @@ void dbgOutput() {
   myNex.writeNum("debug2",ADS.getError());
   #endif
 }
+
+void onPSMInterrupt() {}
