@@ -840,6 +840,8 @@ void trigger3() {
 bool brewState() {
   #if defined(ARDUINO_ARCH_AVR) && defined(TIMERINTERRUPT_ENABLED)
     return adcInitialized ? (uint8_t)adcData[2] < 128U : false;
+  #elif defined(ARDUINO_ARCH_AVR)
+    return analogRead(brewPin) < 128;
   #else
     return digitalRead(brewPin) == LOW; // pin will be low when switch is ON.
   #endif
@@ -849,6 +851,8 @@ bool brewState() {
 bool steamState() {
   #if defined(ARDUINO_ARCH_AVR) && defined(TIMERINTERRUPT_ENABLED)
     return adcInitialized ? (uint8_t)adcData[3] < 128U : false;
+  #elif defined(ARDUINO_ARCH_AVR)
+    return analogRead(steamPin) < 128;
   #else
     return digitalRead(steamPin) == LOW; // pin will be low when switch is ON.
   #endif
