@@ -71,9 +71,9 @@
 
 // Define some const values
 #define GET_KTYPE_READ_EVERY 250 // thermocouple data read interval not recommended to be changed to lower than 250 (ms)
-#define GET_PRESSURE_READ_EVERY 50
-#define GET_SCALES_READ_EVERY 100
-#define REFRESH_SCREEN_EVERY 150 // Screen refresh interval (ms)
+#define GET_PRESSURE_READ_EVERY 100
+#define GET_SCALES_READ_EVERY 200
+#define REFRESH_SCREEN_EVERY 250 // Screen refresh interval (ms)
 #define DESCALE_PHASE1_EVERY 500 // short pump pulses during descale
 #define DESCALE_PHASE2_EVERY 5000 // short pause for pulse effficience activation
 #define DESCALE_PHASE3_EVERY 120000 // long pause for scale softening
@@ -136,14 +136,12 @@ float currentWeight;
 float previousWeight;
 float flowVal;
 
-//int tarcalculateWeight;
 bool weighingStartRequested;
 bool scalesPresent;
 bool tareDone;
 
 // brew detection vars
 bool brewActive;
-bool previousBrewState;
 
 //PP&PI variables
 //default phases. Updated in updatePressureProfilePhases.
@@ -182,10 +180,6 @@ int ppFinishBar;
 int ppHold;
 int ppLength;
 int selectedOperationalMode;
-int regionHz;
-
-// Other util vars
-float pressureTargetComparator;
 
 // EEPROM  stuff
 #define  EEP_SIG                 0
@@ -347,8 +341,6 @@ void calculateWeight() {
 }
 
 void calculateFlow() {
-  // static long refreshTimer;
-
   if (millis() >= flowTimer) {
     flowVal = (currentWeight - previousWeight)*10;
     previousWeight = currentWeight;
@@ -420,11 +412,10 @@ void setPressure(float targetValue) {
   int pumpValue;
   float diff = targetValue - livePressure;
 
-  if (targetValue == 0 || livePressure > targetValue) {
-    pumpValue = 0;
-  } else {
-    float diff = targetValue - livePressure;
+  if (diff > 0) {
     pumpValue = PUMP_RANGE / (1.f + exp(1.7f - diff/0.9f));
+  } else {
+    pumpValue = 0;
   }
 
   pump.set(pumpValue);
@@ -454,7 +445,6 @@ void pageValuesRefresh() {  // Refreshing our values on page changes
     HPWR                    = myNex.readNumber("hpwr");  // reading the brew time delay used to apply heating in waves
     MainCycleDivider        = myNex.readNumber("mDiv");  // reading the delay divider
     BrewCycleDivider        = myNex.readNumber("bDiv");  // reading the delay divider
-    regionHz                = myNex.readNumber("regHz");
     warmupEnabled           = myNex.readNumber("warmupState");
     homeScreenScalesEnabled = myNex.readNumber("scalesEnabled");
 
@@ -571,14 +561,14 @@ void justDoCoffee() {
     //brewTimer(0);
     if (kProbeReadValue < ((float)setPoint - 10.00f)) {
       setBoiler(HIGH);
-    } else if (kProbeReadValue >= ((float)setPoint - 10.00f) && kProbeReadValue < ((float)setPoint - 3.00f)) {
+    } else if (kProbeReadValue < ((float)setPoint - 3.00f)) {
       setBoiler(HIGH);
       if (millis() - heaterWave > HPWR_OUT/BrewCycleDivider) {
         setBoiler(LOW);
         heaterState=false;
         heaterWave=millis();
       }
-    } else if ((kProbeReadValue >= ((float)setPoint - 3.00f)) && (kProbeReadValue <= ((float)setPoint - 1.00f))) {
+    } else if (kProbeReadValue <= ((float)setPoint - 1.00f)) {
       if (millis() - heaterWave > HPWR_OUT/BrewCycleDivider && !heaterState) {
         setBoiler(HIGH);
         heaterState=true;
@@ -588,7 +578,7 @@ void justDoCoffee() {
         heaterState=false;
         heaterWave=millis();
       }
-    } else if ((kProbeReadValue >= ((float)setPoint - 0.5f)) && kProbeReadValue < (float)setPoint) {
+    } else if (kProbeReadValue < (float)setPoint) {
       if (millis() - heaterWave > HPWR_OUT/BrewCycleDivider && !heaterState ) {
         setBoiler(HIGH);
         heaterState=true;
@@ -631,26 +621,16 @@ void steamCtrl() {
 //#############################################################################################
 
 void lcdRefresh() {
-  // static long pageRefreshTimer;
-  static float shotWeight;
-
   if (millis() > pageRefreshTimer) {
     /*LCD pressure output, as a measure to beautify the graphs locking the live pressure read for the LCD alone*/
     // if (brewActive) myNex.writeNum("pressure.val", (livePressure > 0.f) ? livePressure*10.f : 0.f);
-    if (brewActive) myNex.writeNum("pressure.val", (livePressure > 0.f) ? (livePressure <= pressureTargetComparator + 0.5f) ? livePressure*10.f : pressureTargetComparator*10.f : 0.f);
-    else myNex.writeNum("pressure.val", (livePressure > 0.f) ? livePressure*10.f : 0.f);
+    myNex.writeNum("pressure.val", (livePressure > 0.f) ? livePressure * 10.f : 0.f);
     /*LCD temp output*/
-    myNex.writeNum("currentTemp",int(kProbeReadValue-offsetTemp));
+    myNex.writeNum("currentTemp", int(kProbeReadValue - offsetTemp));
     /*LCD weight output*/
-    if (weighingStartRequested && brewActive) {
-      (currentWeight > 0.f) ? myNex.writeStr("weight.txt",String(currentWeight,1)) : myNex.writeStr("weight.txt", "0.0");
-      shotWeight = currentWeight;
-    } else if (weighingStartRequested && !brewActive) {
-      if (myNex.currentPageId != 0 && !homeScreenScalesEnabled) myNex.writeStr("weight.txt",String(shotWeight,1));
-      else if(myNex.currentPageId == 0 && homeScreenScalesEnabled) (currentWeight > 0.f) ? myNex.writeStr("weight.txt",String(currentWeight,1)) : myNex.writeStr("weight.txt", "0.0");
-    }
+    myNex.writeStr("weight.txt", currentWeight > 0.f ? String(currentWeight, 1) : "0.0");
     /*LCD flow output*/
-    if (weighingStartRequested) (flowVal>0.f) ? myNex.writeNum("flow.val", int(flowVal)) : myNex.writeNum("flow.val", 0.f);
+    myNex.writeNum("flow.val", flowVal > 0.f ? int(flowVal) : 0.f);
 
     dbgOutput();
 
@@ -820,7 +800,6 @@ void trigger1() {
 
 void trigger2() {
   tareDone = false;
-  previousBrewState = false;
   scalesTare();
 }
 
@@ -998,22 +977,19 @@ void newPressureProfile() {
     CurrentPhase currentPhase = phases.getCurrentPhase(timeInPP);
     newBarValue = phases.phases[currentPhase.phaseIndex].getPressure(currentPhase.timeInPhase);
     preinfusionFinished = currentPhase.phaseIndex >= preInfusionFinishedPhaseIdx;
-  }
-  else {
+  } else {
     newBarValue = 0.0f;
     preinfusionFinished = false;
   }
   setPressure(newBarValue);
-  // saving the target pressure
-  pressureTargetComparator = preinfusionFinished ? (int) newBarValue : livePressure;
   // Keep that water at temp
   justDoCoffee();
 }
 
 void manualPressureProfile() {
-  if( selectedOperationalMode == 3 ) {
+  if (selectedOperationalMode == 3) {
     int power_reading = myNex.readNumber("h0.val");
-    setPressure(power_reading);
+    setPressure(mapIntRange(power_reading, 0, 10, 0, ppStartBar, 1));
   }
   justDoCoffee();
 }
@@ -1027,14 +1003,17 @@ void brewDetect() {
     digitalWrite(valvePin, HIGH);
     /* Applying the below block only when brew detected */
     if (selectedOperationalMode == 0 || selectedOperationalMode == 1 || selectedOperationalMode == 2 || selectedOperationalMode == 3 || selectedOperationalMode == 4) {
-      brewTimer(1); // nextion timer start
+      if (!brewActive) {
+        tareDone = false;
+        brewTimer(1); // nextion timer start
+        myNex.writeNum("warmupState", 0); // Flaggig warmup notification on Nextion needs to stop (if enabled)
+      }
       brewActive = true;
       weighingStartRequested = true; // Flagging weighing start
-      myNex.writeNum("warmupState", 0); // Flaggig warmup notification on Nextion needs to stop (if enabled)
       if (myNex.currentPageId == 1 || myNex.currentPageId == 2 || myNex.currentPageId == 8 || homeScreenScalesEnabled ) calculateWeight();
     } else if (selectedOperationalMode == 5 || selectedOperationalMode == 9) pump.set(127); // setting the pump output target to 9 bars for non PP or PI profiles
     else if (selectedOperationalMode == 6) brewTimer(1); // starting the timerduring descaling
-  } else{
+  } else {    
     digitalWrite(valvePin, LOW);
     pump.set(0);
     brewTimer(0); // stopping timer
@@ -1045,12 +1024,11 @@ void brewDetect() {
     preinfusionFinished = false;
     if (myNex.currentPageId == 1 || myNex.currentPageId == 2 || myNex.currentPageId == 8 || homeScreenScalesEnabled ) {
       /* Only setting the weight activity value if it's been previously unset */
-      weighingStartRequested=true;
+      weighingStartRequested = true;
       calculateWeight();
     } else {/* Only resetting the scales values if on any other screens than brew or scales */
       weighingStartRequested = false; // Flagging weighing stop
       tareDone = false;
-      previousBrewState = false;
       currentWeight = 0.f;
       previousWeight = 0.f;
     }
@@ -1087,17 +1065,17 @@ void scalesInit() {
 }
 
 void scalesTare() {
-  if( scalesPresent && (!tareDone || !previousBrewState) ) {
+  if (scalesPresent && !tareDone) {
     #if defined(SINGLE_HX711_CLOCK)
-      if (LoadCells.is_ready()) LoadCells.tare(5);
+      if (LoadCells.is_ready()) 
+        LoadCells.tare(5);
     #else
       if (LoadCell_1.wait_ready_timeout(300) && LoadCell_2.wait_ready_timeout(300)) {
         LoadCell_1.tare(2);
         LoadCell_2.tare(2);
       }
     #endif
-    tareDone=1;
-    previousBrewState=1;
+    tareDone = true;
   }
 }
 
