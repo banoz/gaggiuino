@@ -562,7 +562,7 @@ void justDoCoffee() {
         heaterWave=millis();
       }
     } else if(kProbeReadValue <= setPoint-1.5f) {
-    setBoiler(HIGH);
+      setBoiler(HIGH);
     } else {
       setBoiler(LOW);
     }
@@ -1036,6 +1036,7 @@ void brewDetect() {
     else if (selectedOperationalMode == 6) brewTimer(1); // starting the timerduring descaling
   } else{
     digitalWrite(valvePin, LOW);
+    pump.set(0);
     brewTimer(0); // stopping timer
     brewActive = false;
     /* UPDATE VARIOUS INTRASHOT TIMERS and VARS */
