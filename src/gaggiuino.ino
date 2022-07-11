@@ -241,6 +241,7 @@ void setup() {
 
   #if defined(ARDUINO_ARCH_AVR) && defined(ADCINTERRUPT_ENABLED)
     initPressure();
+    delay(100);
   #endif
 
   #if defined(ADAFRUIT_MAX31855_H)
@@ -352,15 +353,28 @@ void calculateWeightAndFlow() {
 //############################################______PRESSURE_____TRANSDUCER_____################################################
 //##############################################################################################################################
 #if defined(ARDUINO_ARCH_AVR) && defined(ADCINTERRUPT_ENABLED)
-  volatile char adcData[4];
+  volatile uint8_t adcData[4];
   volatile char adcInput[4];
   volatile int adcIndex = 0;
   bool adcInitialized = false;
+
+  volatile uint8_t adc1Data[4];
+  volatile int adc1Index = 0;
 
   void adcISR() {
     if (adcInitialized) {
       adcData[adcIndex] = ADCH;
       
+      if (adcIndex == 1) {
+        adc1Data[adc1Index] = adcData[1];
+
+        adc1Index++;
+
+        if (adc1Index > 3) {
+          adc1Index = 0;
+        }
+      }
+
       adcIndex++;
 
       if (adcIndex > 3) {
@@ -381,6 +395,16 @@ void calculateWeightAndFlow() {
     adcInput[2] = brewPin - 14U;
     adcInput[3] = steamPin - 14U;
 
+    adcData[0] = 0;
+    adcData[1] = 0;
+    adcData[2] = 0xFFU;
+    adcData[3] = 0xFFU;
+
+    adc1Data[0] = 25U;
+    adc1Data[1] = 25U;
+    adc1Data[2] = 25U;
+    adc1Data[3] = 25U;
+
     adcInitialized = true;
   }
   
@@ -399,7 +423,17 @@ float getPressure() {  //returns sensor pressure data
 
     #if defined(ARDUINO_ARCH_AVR)
       #if defined(ADCINTERRUPT_ENABLED)
-        return adcInitialized ? (float)((uint8_t)adcData[1] - 25) / 17.1f : 0.0f;
+        uint16_t avgPressure = 0U;
+        avgPressure += (uint8_t)adc1Data[0];
+        avgPressure += (uint8_t)adc1Data[1];
+        avgPressure += (uint8_t)adc1Data[2];
+        avgPressure += (uint8_t)adc1Data[3];
+        avgPressure = avgPressure >> 2;
+        if (avgPressure > 25U) {
+          return adcInitialized ? (avgPressure - 25U) / 17.1f : 0.0f;
+        } else {
+          return 0.F;
+        }
       #else
         return (analogRead(pressurePin) - 102) / 68.27f;
       #endif
