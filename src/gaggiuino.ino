@@ -129,6 +129,7 @@ unsigned long brewingTimer = 0;
 volatile float kProbeReadValue; //temp val
 volatile float livePressure;
 volatile float liveWeight;
+volatile bool isPressureFalling;
 
 //scales vars
 /* If building for STM32 define the scales factors here */
@@ -310,14 +311,13 @@ void sensorsRead() { // Reading the thermocouple temperature
   }
 
   // Read pressure and store in a global var for further controls
-  #if defined(ADCINTERRUPT_ENABLED)
+
+  float lastPressure = livePressure;
+  if (millis() > pressureTimer) {
     livePressure = getPressure();
-  #else
-    if (millis() > pressureTimer) {
-      livePressure = getPressure();
-      pressureTimer = getNextMillis(GET_PRESSURE_READ_EVERY);
-    }
-  #endif
+    isPressureFalling = lastPressure > livePressure + 0.01f;
+    pressureTimer = getNextMillis(GET_PRESSURE_READ_EVERY);
+  }
 
   // Weight output
   if (scalesPresent && tareDone) {
@@ -443,15 +443,17 @@ float getPressure() {  //returns sensor pressure data
 }
 
 void setPressure(float targetValue) {
-  int pumpValue;
-  float diff = targetValue - livePressure;
-
-  if (diff > 0) {
-    pumpValue = PUMP_RANGE / (1.f + exp(1.7f - diff/0.9f));
-  } else {
-    pumpValue = 0;
+  unsigned int pumpValue = 0;
+  if (targetValue > 0.5f) {
+    float diff = targetValue - livePressure;
+    if (diff > 6.F) {
+      pumpValue = PUMP_RANGE;
+    } else if (diff > 0.F) {
+      pumpValue = PUMP_RANGE / (1.f + exp(1.5f - diff / 1.4f));
+    } else if (isPressureFalling && diff > -0.7F) {
+      pumpValue = PUMP_RANGE / (1.f + exp(2.f - diff / 0.2f));
+    }
   }
-
   pump.set(pumpValue);
 }
 
