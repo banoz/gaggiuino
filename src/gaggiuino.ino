@@ -1285,8 +1285,9 @@ void valuesLoadFromEEPROM() {
 void ads1115Init() {
 #if defined(ARDUINO_ARCH_STM32)
   ADS.begin();
+  ADS.setWireClock(400000);
   ADS.setGain(0);      // 6.144 volt
-  ADS.setDataRate(7);  // fast
+  ADS.setDataRate(5);  // 250 SPS
   ADS.setMode(0);      // continuous mode
   ADS.readADC(0);      // first read to trigger
 #endif
