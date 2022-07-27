@@ -1,4 +1,4 @@
-// #define SINGLE_HX711_CLOCK
+#define SINGLE_HX711_CLOCK
 #if defined(SINGLE_HX711_CLOCK)
     #include <HX711_2.h>
 #else
@@ -14,17 +14,17 @@
 
 
 #if defined(ARDUINO_ARCH_AVR)
-    #define relayPin 8  // PB0
-    #define LOADCELL_1_DOUT_PIN 12 //mcu > HX711 no 1 dout pin
-    #define LOADCELL_2_DOUT_PIN 13 //mcu > HX711 no 2 dout pin
-    #define LOADCELL_1_SCK_PIN 10 //mcu > HX711 no 1 sck pin
-    #define LOADCELL_2_SCK_PIN 11 //mcu > HX711 no 2 sck pin
+    #define relayPin 11  // PB3
+    #define LOADCELL_1_DOUT_PIN A2 //mcu > HX711 no 1 dout pin
+    #define LOADCELL_2_DOUT_PIN A3 //mcu > HX711 no 2 dout pin
+    #define LOADCELL_1_SCK_PIN A1 //mcu > HX711 no 1 sck pin
+    #define LOADCELL_2_SCK_PIN -1 //mcu > HX711 no 2 sck pin
 #elif defined(ARDUINO_ARCH_STM32)
-    #define relayPin PB9  // PB0
-    #define LOADCELL_1_DOUT_PIN  PA1
-    #define LOADCELL_2_DOUT_PIN  PA2
-    #define LOADCELL_1_SCK_PIN  PB0
-    #define LOADCELL_2_SCK_PIN  PB1
+    #define relayPin PA6
+    #define LOADCELL_1_DOUT_PIN  PA2
+    #define LOADCELL_2_DOUT_PIN  PA3
+    #define LOADCELL_1_SCK_PIN  PA1
+    #define LOADCELL_2_SCK_PIN  -1
 #endif
 
 #if defined(SINGLE_HX711_CLOCK)
