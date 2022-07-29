@@ -1047,13 +1047,16 @@ void brewDetect() {
         currentWeight = 0.f;
         previousWeight = 0.f;
         preinfusionFinished = false;
-        brewTimer(1); // nextion timer start
         myNex.writeNum("warmupState", 0); // Flaggig warmup notification on Nextion needs to stop (if enabled)
       }
-      brewActive = true;
       if (myNex.currentPageId == 1 || myNex.currentPageId == 2 || myNex.currentPageId == 8 || homeScreenScalesEnabled ) calculateWeightAndFlow();
-    } else if (selectedOperationalMode == 5 || selectedOperationalMode == 9) pump.set(PUMP_RANGE); // setting the pump output target to 9 bars for non PP or PI profiles
-    else if (selectedOperationalMode == 6) brewTimer(1); // starting the timerduring descaling
+    } else if (selectedOperationalMode == 5 || selectedOperationalMode == 9) {
+      pump.set(PUMP_RANGE); // setting the pump output target to 9 bars for non PP or PI profiles
+    }
+    if (!brewActive) {
+      brewTimer(1); // starting the timer
+    }
+    brewActive = true;
   } else {    
     digitalWrite(valvePin, LOW);
     pump.set(0);
