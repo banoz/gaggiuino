@@ -1,7 +1,3 @@
-#define SINGLE_HX711_CLOCK
-// #define DEBUG_ENABLED
-// #define MAX31855_ENABLED
-#define ADCINTERRUPT_ENABLED
 #if defined(DEBUG_ENABLED) && defined(ARDUINO_ARCH_STM32)
   #include "dbg.h"
 #endif
@@ -41,14 +37,13 @@
   #define HX711_dout_2 A3 //mcu > HX711 no 2 dout pin
   #define HX711_sck_1 A1 //mcu > HX711 no 1 sck pin
   #define HX711_sck_2 -1 //mcu > HX711 no 2 sck pin
-  #define USART_CH Serial
+  #define USART_LCD Serial
 
   #if defined(ADCINTERRUPT_ENABLED)
     void initPressure();
     void adcISR();
   #endif
-
-#elif defined(ARDUINO_ARCH_STM32)// if arch is stm32
+#elif defined(ARDUINO_ARCH_STM32_V1)// if arch is stm32
   // STM32F4 pins definitions
   #define zcPin PA0
   #define thermoDO PB14
@@ -64,10 +59,30 @@
   #define HX711_sck_2 -1 // no connection
   #define HX711_dout_1 PA2 //mcu > HX711 no 1 dout pin
   #define HX711_dout_2 PA3 //mcu > HX711 no 2 dout pin
-  #define USART_CH Serial1
+  #define USART_LCD Serial1
+  //#define // USART_CH1 Serial
+#elif defined(ARDUINO_ARCH_STM32)// if arch is stm32
+  // STM32F4 pins definitions
+  #define zcPin PA0
+  #define thermoDO PB4
+  #define thermoCS PA6
+  #define thermoCLK PA5
+  #define brewPin PC14
+  #define relayPin PA15
+  #define dimmerPin PA1
+  #define valvePin PC13
+  #define pressurePin ADS115_A0 //set here just for reference
+  #define steamPin PC15
+  #define relay1Pin PB13
+  #define relay2Pin PB12
+  #define HX711_sck_1 PB0 //mcu > HX711 no 1 sck pin
+  #define HX711_sck_2 -1 // no connection
+  #define HX711_dout_1 PB8 //mcu > HX711 no 1 dout pin
+  #define HX711_dout_2 PB9 //mcu > HX711 no 2 dout pin
+  #define USART_LCD Serial2 // PA2 & PA3
+  #define USART_DEBUG Serial  // USB-CDC
   //#define // USART_CH1 Serial
 #endif
-
 
 // Define some const values
 #define GET_KTYPE_READ_EVERY 250 // thermocouple data read interval not recommended to be changed to lower than 250 (ms)
@@ -85,17 +100,19 @@
 #if defined(ARDUINO_ARCH_AVR)
   #define ZC_MODE FALLING
   #define ZC_DIVIDER 1
-#elif defined(ARDUINO_ARCH_STM32)
+#else
   #define ZC_MODE RISING
   #define ZC_DIVIDER 2
 #endif
 
-#if defined(ARDUINO_ARCH_STM32)// if arch is stm32
+#if defined(ARDUINO_ARCH_STM32_V1)// if arch is stm32
 //If additional USART ports want ti eb used thy should be enable first
 //HardwareSerial USART_CH(PA10, PA9);
   TwoWire Wire2(PB3, PB10);
 
   ADS1115 ADS(0x48, &Wire2);
+#elif defined(ARDUINO_ARCH_STM32)
+  ADS1115 ADS(0x48);
 #endif
 //Init the thermocouples with the appropriate pins defined above with the prefix "thermo"
 #if defined(ADAFRUIT_MAX31855_H)
@@ -104,7 +121,7 @@
   MAX6675 thermocouple(thermoCLK, thermoCS, thermoDO);
 #endif
 // EasyNextion object init
-EasyNex myNex(USART_CH);
+EasyNex myNex(USART_LCD);
 //Banoz PSM - for more cool shit visit https://github.com/banoz  and don't forget to star
 PSM pump(zcPin, dimmerPin, PUMP_RANGE, ZC_MODE, ZC_DIVIDER, 4);
 //#######################__HX711_stuff__##################################
@@ -133,8 +150,8 @@ volatile bool isPressureFalling;
 
 //scales vars
 /* If building for STM32 define the scales factors here */
-float scalesF1 = -4183.14f; // 3,911.142856
-float scalesF2 = 3911.14f; // -4,183.142856
+float scalesF1 = 2407.5f;
+float scalesF2 = 2382.0f;
 float currentWeight;
 float previousWeight;
 float flowVal;
@@ -160,7 +177,6 @@ int preInfusionFinishedPhaseIdx = 3;
 bool preinfusionFinished;
 
 bool POWER_ON;
-bool  descaleCheckBox;
 bool  preinfusionState;
 bool  pressureProfileState;
 bool  warmupEnabled;
@@ -209,9 +225,9 @@ int selectedOperationalMode;
 
 
 void setup() {
-  // USART_CH1.begin(115200); //debug channel
-  USART_CH.begin(115200); // LCD comms channel
-
+  // USART_DEBUG.begin(115200); //debug channel
+  USART_LCD.begin(115200); // LCD comms channel
+  
   // Various pins operation mode handling
   pinInit();
 
@@ -223,6 +239,11 @@ void setup() {
 
   // Turn off boiler in case init is unsecessful
   setBoiler(LOW);  // relayPin LOW
+
+  #if defined(ARDUINO_ARCH_STM32)
+    digitalWrite(relay1Pin, LOW);
+    digitalWrite(relay2Pin, LOW);
+  #endif
 
   //Pump
   pump.set(0);
@@ -414,12 +435,11 @@ void calculateWeightAndFlow() {
 #endif
 
 float getPressure() {  //returns sensor pressure data
-    // 5V/1024 = 1/51.2 (8 bit) or 1/204.8 (10 bit) or 6553.6 (15 bit)
-    // voltageZero = 0.5V --> 25.6 (8 bit) or 102.4 (10 bit) or 3276.8 (15 bit)
-    // voltageMax = 4.5V --> 230.4 (8 bit) or 921.6 (10 bit) or 29491.2 (15 bit)
-    // range 921.6 - 102.4 = 204.8 or 819.2 or 26214.4
+    // voltageZero = 0.5V --> 25.6 (8 bit) or 102.4 (10 bit) or 2666.7 (ADS 15 bit)
+    // voltageMax = 4.5V --> 230.4 (8 bit) or 921.6 (10 bit) or 24000 (ADS 15 bit)
+    // range 921.6 - 102.4 = 204.8 or 819.2 or 21333.3
     // pressure gauge range 0-1.2MPa - 0-12 bar
-    // 1 bar = 17.1 or 68.27 or 2184.5
+    // 1 bar = 17.1 or 68.27 or 1777.8
 
     #if defined(ARDUINO_ARCH_AVR)
       #if defined(ADCINTERRUPT_ENABLED)
@@ -438,7 +458,7 @@ float getPressure() {  //returns sensor pressure data
         return (analogRead(pressurePin) - 102) / 68.27f;
       #endif
     #elif defined(ARDUINO_ARCH_STM32)
-      return (ADS.getValue() - 3276) / 2184.5f;
+      return (ADS.getValue() - 2666) / 1777.8f;
     #endif
 }
 
@@ -518,7 +538,7 @@ void modeSelect() {
       break;
     case 6:
       // USART_CH1.println("MODE SELECT 6");
-      deScale(descaleCheckBox);
+      deScale();
       break;
     case 7:
       // USART_CH1.println("MODE SELECT 7");
@@ -903,7 +923,7 @@ void setBoiler(int val) {
 //###############################____DESCALE__CONTROL____######################################
 //#############################################################################################
 
-void deScale(bool c) {
+void deScale() {
   static bool blink = true;
   static long timer = millis();
   static int currentCycleRead = myNex.readNumber("j0.val");
@@ -1012,7 +1032,7 @@ void newPressureProfile() {
   float newBarValue;
 
   if (brewActive) { //runs this only when brew button activated and pressure profile selected
-    long timeInPP = millis() - brewingTimer;
+    unsigned long timeInPP = millis() - brewingTimer;
     CurrentPhase currentPhase = phases.getCurrentPhase(timeInPP);
     newBarValue = phases.phases[currentPhase.phaseIndex].getPressure(currentPhase.timeInPhase);
     preinfusionFinished = currentPhase.phaseIndex >= preInfusionFinishedPhaseIdx;
@@ -1303,6 +1323,11 @@ void pinInit() {
     pinMode(brewPin, INPUT_PULLUP);
     pinMode(steamPin, INPUT_PULLUP);
   #endif
+  #if defined(ARDUINO_ARCH_STM32)
+    pinMode(relay1Pin, OUTPUT);
+    pinMode(relay2Pin, OUTPUT);
+  #endif
+
   //pinMode(HX711_dout_1, INPUT_PULLUP);
   //pinMode(HX711_dout_2, INPUT_PULLUP);
 }
