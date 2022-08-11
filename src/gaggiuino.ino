@@ -147,7 +147,7 @@ volatile float kProbeReadValue; //temp val
 volatile float livePressure;
 volatile float liveWeight;
 volatile bool isPressureFalling;
-
+volatile bool weightTargetHit;
 //scales vars
 /* If building for STM32 define the scales factors here */
 float scalesF1 = 2407.5f;
@@ -161,6 +161,7 @@ bool tareDone;
 
 // brew detection vars
 bool brewActive;
+unsigned long flushUntil;
 
 //PP&PI variables
 //default phases. Updated in updatePressureProfilePhases.
@@ -184,8 +185,7 @@ bool  flushEnabled;
 bool  descaleEnabled;
 bool brewDeltaActive;
 bool homeScreenScalesEnabled;
-volatile int  HPWR;
-volatile int  HPWR_OUT;
+int  HPWR;
 int  setPoint;
 int  offsetTemp;
 int  MainCycleDivider;
@@ -198,6 +198,8 @@ int ppFinishBar;
 int ppHold;
 int ppLength;
 int selectedOperationalMode;
+
+float weightTarget; // tenths of grams
 
 // EEPROM  stuff
 #define  EEP_SIG                 0
@@ -215,14 +217,13 @@ int selectedOperationalMode;
 #define  EEP_PREINFUSION_SEC     180
 #define  EEP_PREINFUSION_BAR     190
 #define  EEP_PREINFUSION_SOAK    170
-#define  EEP_REGPWR_HZ           195
 #define  EEP_WARMUP              200
 #define  EEP_HOME_ON_SHOT_FINISH 205
 #define  EEP_GRAPH_BREW          210
-#define  EEP_BREW_DELTA          225
 #define  EEP_SCALES_F1           215
 #define  EEP_SCALES_F2           220
-
+#define  EEP_BREW_DELTA          225
+#define  EEP_SHOT_TARGET_WEIGHT  230
 
 void setup() {
   // USART_DEBUG.begin(115200); //debug channel
@@ -274,6 +275,8 @@ void setup() {
   scalesInit();
   myNex.lastCurrentPageId = myNex.currentPageId;
   POWER_ON = true;
+
+  myNex.writeNum("cps", pump.cps());
 
   // USART_CH1.println("Init step 6");
 }
@@ -368,6 +371,19 @@ void calculateWeightAndFlow() {
       }
     }
   }
+}
+
+// Stops the pump if setting active and dose/weight conditions met
+bool stopOnWeight() {
+  if (selectedOperationalMode == 0 || selectedOperationalMode == 1 || selectedOperationalMode == 2 || selectedOperationalMode == 3 || selectedOperationalMode == 4) {
+    if (weightTarget > 1) {
+      if (weightTargetHit || (currentWeight + .5f) >= weightTarget) {
+        weightTargetHit = true;
+        return true;
+      } 
+    }
+  }
+  return false;
 }
 
 //##############################################################################################################################
@@ -484,24 +500,28 @@ void setPressure(float targetValue) {
 void pageValuesRefresh() {  // Refreshing our values on page changes
 
   if ( myNex.currentPageId != myNex.lastCurrentPageId || POWER_ON == true ) {
-    preinfusionState        = myNex.readNumber("piState"); // reding the preinfusion state value which should be 0 or 1
-    pressureProfileState    = myNex.readNumber("ppState"); // reding the pressure profile state value which should be 0 or 1
+    /*preinfusionState        = myNex.readNumber("piState"); // reding the preinfusion state value which should be 0 or 1
     preinfuseTime           = myNex.readNumber("piSec");
     preinfuseBar            = myNex.readNumber("piBar");
     preinfuseSoak           = myNex.readNumber("piSoak"); // pre-infusion soak value
+    pressureProfileState    = myNex.readNumber("ppState"); // reding the pressure profile state value which should be 0 or 1
     ppStartBar              = myNex.readNumber("ppStart");
     ppFinishBar             = myNex.readNumber("ppFin");
     ppHold                  = myNex.readNumber("ppHold"); // pp start pressure hold
     ppLength                = myNex.readNumber("ppLength"); // pp shot length
-    brewDeltaActive         = myNex.readNumber("deltaState");
-    flushEnabled            = myNex.readNumber("flushState");
-    descaleEnabled          = myNex.readNumber("descaleState");
     setPoint                = myNex.readNumber("setPoint");  // reading the setPoint value from the lcd
     offsetTemp              = myNex.readNumber("offSet");  // reading the offset value from the lcd
     HPWR                    = myNex.readNumber("hpwr");  // reading the brew time delay used to apply heating in waves
     MainCycleDivider        = myNex.readNumber("mDiv");  // reading the delay divider
     BrewCycleDivider        = myNex.readNumber("bDiv");  // reading the delay divider
     warmupEnabled           = myNex.readNumber("warmupState");
+    scalesF1                = myNex.readNumber("scalesF1");
+    scalesF2                = myNex.readNumber("scalesF2");
+    brewDeltaActive         = myNex.readNumber("deltaState");
+    weightTarget            = myNex.readNumber("weightTarget");*/
+
+    flushEnabled            = myNex.readNumber("flushState");
+    descaleEnabled          = myNex.readNumber("descaleState");
     homeScreenScalesEnabled = myNex.readNumber("scalesEnabled");
 
     // MODE_SELECT should always be last
@@ -573,7 +593,7 @@ void justDoCoffee() {
   static bool heaterState;
   float BREW_TEMP_DELTA;
   // Calculating the boiler heating power range based on the below input values
-  HPWR_OUT = mapRange(kProbeReadValue, setPoint - 10, setPoint, HPWR, HPWR_LOW, 0);
+  int HPWR_OUT = mapRange(kProbeReadValue, setPoint - 10, setPoint, HPWR, HPWR_LOW, 0);
   HPWR_OUT = constrain(HPWR_OUT, HPWR_LOW, HPWR);  // limits range of sensor values to HPWR_LOW and HPWR
   BREW_TEMP_DELTA = mapRange(kProbeReadValue, setPoint, setPoint+TEMP_DELTA(setPoint), TEMP_DELTA(setPoint), 0, 0);
   BREW_TEMP_DELTA = constrain(BREW_TEMP_DELTA, 0,  TEMP_DELTA(setPoint));
@@ -684,13 +704,15 @@ void lcdRefresh() {
   if (millis() > pageRefreshTimer) {
     /*LCD pressure output, as a measure to beautify the graphs locking the live pressure read for the LCD alone*/
     // if (brewActive) myNex.writeNum("pressure.val", (livePressure > 0.f) ? livePressure*10.f : 0.f);
-    myNex.writeNum("pressure.val", (livePressure > 0.f) ? int(livePressure * 10.f) : 0.f);
+    myNex.writeNum("cp", livePressure > 0.f ? int(livePressure * 10) : 0);
     /*LCD temp output*/
-    myNex.writeNum("currentTemp", int(kProbeReadValue - offsetTemp));
+    myNex.writeNum("ct", int(kProbeReadValue) - offsetTemp);
     /*LCD weight output*/
-    myNex.writeStr("weight.txt", currentWeight > 0.f ? String(currentWeight, 1) : "0.0");
+    myNex.writeNum("cw", currentWeight > 0.f ? int(currentWeight * 10) : 0);
     /*LCD flow output*/
-    myNex.writeNum("flow.val", flowVal > 0.f ? int(flowVal * 10.f) : 0.f);
+    myNex.writeNum("cf", flowVal > 0.f ? int(flowVal * 10) : 0);
+
+    myNex.writeNum("ms", millis());
 
     dbgOutput();
 
@@ -713,62 +735,53 @@ void trigger1() {
         break;
       case 3:
         // Saving ppStart,ppFin,ppHold and ppLength
-        valueToSave = myNex.readNumber("ppStart");
-        if (valueToSave >= 0 ) {
-          EEPROM.put(EEP_P_START, valueToSave);
-          allValuesUpdated++;
-        }
-        valueToSave = myNex.readNumber("ppFin");
-        if (valueToSave >= 0 ) {
-          EEPROM.put(EEP_P_FINISH, valueToSave);
-          allValuesUpdated++;
-        }
-        valueToSave = myNex.readNumber("ppHold");
-        if (valueToSave >= 0) {
-          EEPROM.put(EEP_P_HOLD, valueToSave);
-          allValuesUpdated++;
-        }
-        valueToSave = myNex.readNumber("ppLength");
-        if (valueToSave >= 0) {
-          EEPROM.put(EEP_P_LENGTH, valueToSave);
-          allValuesUpdated++;
-        }
+        ppStartBar = myNex.readNumber("ppStart");
+        EEPROM.put(EEP_P_START, ppStartBar);
+        allValuesUpdated++;
+        
+        ppFinishBar = myNex.readNumber("ppFin");
+        EEPROM.put(EEP_P_FINISH, ppFinishBar);
+        allValuesUpdated++;
+
+        ppHold = myNex.readNumber("ppHold");
+        EEPROM.put(EEP_P_HOLD, ppHold);
+        allValuesUpdated++;
+
+        ppLength = myNex.readNumber("ppLength");
+        EEPROM.put(EEP_P_LENGTH, ppLength);
+        allValuesUpdated++;
+
         // Saving PI and PP
-        valueToSave = myNex.readNumber("piState");
-        if (valueToSave == 0 || valueToSave == 1 ) {
-          EEPROM.put(EEP_PREINFUSION, valueToSave);
-          allValuesUpdated++;
-        }
-        valueToSave = myNex.readNumber("ppState");
-        if (valueToSave == 0 || valueToSave == 1 ) {
-          EEPROM.put(EEP_P_PROFILE, valueToSave);
-          allValuesUpdated++;
-        }
+        preinfusionState = myNex.readNumber("piState");
+        EEPROM.put(EEP_PREINFUSION, preinfusionState);
+        allValuesUpdated++;
+
+        pressureProfileState = myNex.readNumber("ppState");
+        EEPROM.put(EEP_P_PROFILE, pressureProfileState);
+        allValuesUpdated++;
+
         //Saved piSec
-        valueToSave = myNex.readNumber("piSec");
-        if ( valueToSave >= 0 ) {
-          EEPROM.put(EEP_PREINFUSION_SEC, valueToSave);
-          allValuesUpdated++;
-        }
+        preinfuseTime = myNex.readNumber("piSec");
+        EEPROM.put(EEP_PREINFUSION_SEC, preinfuseTime);
+        allValuesUpdated++;
+
         //Saved piBar
-        valueToSave = myNex.readNumber("piBar");
-        if ( valueToSave >= 0 ) {
-          EEPROM.put(EEP_PREINFUSION_BAR, valueToSave);
-          allValuesUpdated++;
-        }
+        preinfuseBar = myNex.readNumber("piBar");
+        EEPROM.put(EEP_PREINFUSION_BAR, preinfuseBar);
+        allValuesUpdated++;
+
         //Saved piSoak
-        valueToSave = myNex.readNumber("piSoak");
-        if ( valueToSave >= 0 ) {
-          EEPROM.put(EEP_PREINFUSION_SOAK, valueToSave);
-          allValuesUpdated++;
-        }
+        preinfuseSoak = myNex.readNumber("piSoak");
+        EEPROM.put(EEP_PREINFUSION_SOAK, preinfuseSoak);
+        allValuesUpdated++;
+
         if (allValuesUpdated == 9) {
           allValuesUpdated=0;
           myNex.writeStr("popupMSG.t0.txt","UPDATE SUCCESSFUL!");
         } else myNex.writeStr("popupMSG.t0.txt","ERROR!");
         myNex.writeStr("page popupMSG");
         break;
-      case 4:
+      case 0x0b:
         //Saving brewSettings
         valueToSave = myNex.readNumber("homeOnBrewFinish");
         if ( valueToSave >= 0 ) {
@@ -780,12 +793,23 @@ void trigger1() {
           EEPROM.put(EEP_GRAPH_BREW, valueToSave);
           allValuesUpdated++;
         }
-        valueToSave = myNex.readNumber("deltaState");
-        if ( valueToSave == 0 || valueToSave == 1 ) {
-          EEPROM.put(EEP_BREW_DELTA, valueToSave);
-          allValuesUpdated++;
-        }
+        brewDeltaActive = myNex.readNumber("deltaState");
+        EEPROM.put(EEP_BREW_DELTA, brewDeltaActive);
+        allValuesUpdated++;
+        
         if (allValuesUpdated == 3) {
+          allValuesUpdated=0;
+          myNex.writeStr("popupMSG.t0.txt","UPDATE SUCCESSFUL!");
+        } else myNex.writeStr("popupMSG.t0.txt","ERROR!");
+        myNex.writeStr("page popupMSG");
+        break;
+      case 0x0c:
+        //Saving shotSettings
+        weightTarget = myNex.readNumber("weightTarget") / 10.f;
+        EEPROM.put(EEP_SHOT_TARGET_WEIGHT, weightTarget);
+        allValuesUpdated++;
+        
+        if (allValuesUpdated == 1) {
           allValuesUpdated=0;
           myNex.writeStr("popupMSG.t0.txt","UPDATE SUCCESSFUL!");
         } else myNex.writeStr("popupMSG.t0.txt","ERROR!");
@@ -795,35 +819,30 @@ void trigger1() {
         break;
       case 6:
         // Reading the LCD side set values
-        valueToSave = myNex.readNumber("setPoint");
-        if ( valueToSave > 0) {
-        EEPROM.put(EEP_SETPOINT, valueToSave);
-          allValuesUpdated++;
-        }
+        setPoint = myNex.readNumber("setPoint");
+        EEPROM.put(EEP_SETPOINT, setPoint);
+        allValuesUpdated++;
+
         // Saving offset
-        valueToSave = myNex.readNumber("offSet");
-        if ( valueToSave >= 0 ) {
-        EEPROM.put(EEP_OFFSET, valueToSave);
-          allValuesUpdated++;
-        }
+        offsetTemp = myNex.readNumber("offSet");
+        EEPROM.put(EEP_OFFSET, offsetTemp);
+        allValuesUpdated++;
+
         // Saving HPWR
-        valueToSave = myNex.readNumber("hpwr");
-        if ( valueToSave >= 0 ) {
-        EEPROM.put(EEP_HPWR, valueToSave);
-          allValuesUpdated++;
-        }
+        HPWR = myNex.readNumber("hpwr");
+        EEPROM.put(EEP_HPWR, HPWR);
+        allValuesUpdated++;
+
         // Saving mDiv
-        valueToSave = myNex.readNumber("mDiv");
-        if ( valueToSave >= 1) {
-        EEPROM.put(EEP_M_DIVIDER, valueToSave);
-          allValuesUpdated++;
-        }
+        MainCycleDivider = myNex.readNumber("mDiv");
+        EEPROM.put(EEP_M_DIVIDER, MainCycleDivider);
+        allValuesUpdated++;
+
         //Saving bDiv
-        valueToSave = myNex.readNumber("bDiv");
-        if ( valueToSave >= 1) {
-        EEPROM.put(EEP_B_DIVIDER, valueToSave);
-          allValuesUpdated++;
-        }
+        BrewCycleDivider = myNex.readNumber("bDiv");
+        EEPROM.put(EEP_B_DIVIDER, BrewCycleDivider);
+        allValuesUpdated++;
+
         if (allValuesUpdated == 5) {
           allValuesUpdated=0;
           myNex.writeStr("popupMSG.t0.txt","UPDATE SUCCESSFUL!");
@@ -831,18 +850,20 @@ void trigger1() {
         myNex.writeStr("page popupMSG");
         break;
       case 7:
-        valueToSave = myNex.readNumber("regHz");
-        if ( valueToSave == 50 || valueToSave == 60 ) {
-        EEPROM.put(EEP_REGPWR_HZ, valueToSave);
-          allValuesUpdated++;
-        }
         // Saving warmup state
-        valueToSave = myNex.readNumber("warmupState");
-        if (valueToSave == 0 || valueToSave == 1 ) {
-        EEPROM.put(EEP_WARMUP, valueToSave);
-          allValuesUpdated++;
-        }
-        if (allValuesUpdated == 2) {
+        warmupEnabled = myNex.readNumber("warmupState");
+        EEPROM.put(EEP_WARMUP, warmupEnabled);
+        allValuesUpdated++;
+
+        scalesF1 = myNex.readNumber("scalesF1") / 10.f;
+        EEPROM.put(EEP_SCALES_F1, scalesF1);
+        allValuesUpdated++;
+
+        scalesF1 = myNex.readNumber("scalesF2") / 10.f;
+        EEPROM.put(EEP_SCALES_F2, scalesF1);
+        allValuesUpdated++;
+
+        if (allValuesUpdated == 3) {
           allValuesUpdated=0;
           myNex.writeStr("popupMSG.t0.txt","UPDATE SUCCESSFUL!");
         } else myNex.writeStr("popupMSG.t0.txt","ERROR!");
@@ -866,12 +887,26 @@ void trigger3() {
   homeScreenScalesEnabled = myNex.readNumber("scalesEnabled");
 }
 
+void trigger11() {
+  //digitalWrite(valvePin, HIGH);
+  //pump.set(PUMP_RANGE);
+}
+
+void trigger12() {
+  flushUntil = millis() + 2000;
+  //digitalWrite(valvePin, LOW);
+  //pump.set(0);
+}
+
 //#############################################################################################
 //###############################_____HELPER_FUCTIONS____######################################
 //#############################################################################################
 
 //Function to get the state of the brew switch button
 bool brewState() {
+  if (selectedOperationalMode == 5 && flushUntil > millis()) {
+    return true;
+  }
   #if defined(ARDUINO_ARCH_AVR) && defined(ADCINTERRUPT_ENABLED)
     return adcInitialized ? (uint8_t)adcData[2] < 128U : false;
   #elif defined(ARDUINO_ARCH_AVR)
@@ -1058,7 +1093,7 @@ void manualPressureProfile() {
 //#############################################################################################
 
 void brewDetect() {
-  if ( brewState() ) {
+  if ( brewState() && !stopOnWeight() ) {
     digitalWrite(valvePin, HIGH);
     /* Applying the below block only when brew detected */
     if (selectedOperationalMode == 0 || selectedOperationalMode == 1 || selectedOperationalMode == 2 || selectedOperationalMode == 3 || selectedOperationalMode == 4) {
@@ -1082,6 +1117,7 @@ void brewDetect() {
     pump.set(0);
     brewTimer(0); // stopping timer
     brewActive = false;
+    weightTargetHit = false;
     /* UPDATE VARIOUS INTRASHOT TIMERS and VARS */
     brewingTimer = millis();
     /* Only resetting the brew activity value if it's been previously set */
@@ -1156,38 +1192,67 @@ void eepromInit() {
   EEPROM.get(EEP_PREINFUSION_SOAK, preinfuseSoak);
   #endif
 
-  // #if defined(ARDUINO_ARCH_AVR)
-    //If it's the first boot we'll need to set some defaults
-    if (sig != EEPROM_RESET || setPoint <= 0 || setPoint > 160 || preinfuseSoak > 500) {
+  //If it's the first boot we'll need to set some defaults
+  if (sig != EEPROM_RESET || setPoint <= 0 || setPoint > 160 || preinfuseSoak > 500) {
     // USART_CH.print("SECU_CHECK FAILED! Applying defaults!");
     EEPROM.put(EEP_SIG, EEPROM_RESET);
     //The values can be modified to accomodate whatever system it tagets
     //So on first boot it writes and reads the desired system values
-    EEPROM.put(EEP_SETPOINT, 100);
-    EEPROM.put(EEP_OFFSET, 7);
-    EEPROM.put(EEP_HPWR, 550);
-    EEPROM.put(EEP_M_DIVIDER, 5);
-    EEPROM.put(EEP_B_DIVIDER, 2);
-    EEPROM.put(EEP_PREINFUSION, 1);
-    EEPROM.put(EEP_P_START, 9);
-    EEPROM.put(EEP_P_FINISH, 6);
-    EEPROM.put(EEP_P_PROFILE, 1);
-    EEPROM.put(EEP_PREINFUSION_SEC, 10);
-    EEPROM.put(EEP_PREINFUSION_BAR, 2);
-    EEPROM.put(EEP_REGPWR_HZ, 50);
-    EEPROM.put(EEP_WARMUP, 0);
-    EEPROM.put(EEP_GRAPH_BREW, 1);
-    EEPROM.put(EEP_HOME_ON_SHOT_FINISH, 1);
-    EEPROM.put(EEP_PREINFUSION_SOAK, 10);
-    EEPROM.put(EEP_P_HOLD, 5);
-    EEPROM.put(EEP_P_LENGTH, 15);
-    EEPROM.put(EEP_BREW_DELTA, 1);
-    EEPROM.put(EEP_SCALES_F1, 4000);
-    EEPROM.put(EEP_SCALES_F2, 4000);
-    }
+    setDefaultValues();
 
-  // Applying our saved EEPROM saved values
-  valuesLoadFromEEPROM();
+    valuesWriteToEEPROM();
+    
+    EEPROM.put(EEP_HOME_ON_SHOT_FINISH, 1);
+    EEPROM.put(EEP_GRAPH_BREW, 1);
+
+    myNex.writeNum("homeOnBrewFinish", 1);
+    myNex.writeNum("graphEnabled", 1);
+  } else {
+    // Applying our saved EEPROM saved values
+    valuesLoadFromEEPROM();
+
+    myNex.writeNum("piState", preinfusionState); // preinfusion state value which should be 0 or 1
+    myNex.writeNum("piSec", preinfuseTime);
+    myNex.writeNum("piBar", preinfuseBar);
+    myNex.writeNum("piSoak", preinfuseSoak); // pre-infusion soak value
+    myNex.writeNum("ppState", pressureProfileState); // pressure profile state value which should be 0 or 1
+    myNex.writeNum("ppStart", ppStartBar);
+    myNex.writeNum("ppFin", ppFinishBar);
+    myNex.writeNum("ppHold", ppHold); // pp start pressure hold
+    myNex.writeNum("ppLength", ppLength); // pp shot length
+    myNex.writeNum("setPoint", setPoint);  // setPoint value from the lcd
+    myNex.writeNum("offSet", offsetTemp);  // offset value from the lcd
+    myNex.writeNum("hpwr", HPWR);  // brew time delay used to apply heating in waves
+    myNex.writeNum("mDiv", MainCycleDivider);  // delay divider
+    myNex.writeNum("bDiv", BrewCycleDivider);  // delay divider
+    myNex.writeNum("warmupState", warmupEnabled);
+    myNex.writeNum("scalesF1", scalesF1 * 10);
+    myNex.writeNum("scalesF2", scalesF2 * 10);
+    myNex.writeNum("deltaState", brewDeltaActive);
+    myNex.writeNum("weightTarget", weightTarget * 10);
+  }
+}
+
+void setDefaultValues() {
+  preinfusionState        = true;
+  preinfuseTime           = 10;
+  preinfuseBar            = 2;
+  preinfuseSoak           = 10; // pre-infusion soak value
+  pressureProfileState    = true; // reding the pressure profile state value which should be 0 or 1
+  ppStartBar              = 9;
+  ppFinishBar             = 6;
+  ppHold                  = 5; // pp start pressure hold
+  ppLength                = 15; // pp shot length
+  setPoint                = 100;  // reading the setPoint value from the lcd
+  offsetTemp              = 7;  // reading the offset value from the lcd
+  HPWR                    = 550;  // reading the brew time delay used to apply heating in waves
+  MainCycleDivider        = 5;  // reading the delay divider
+  BrewCycleDivider        = 2;  // reading the delay divider
+  warmupEnabled           = false;
+  scalesF1                = 4000.f;
+  scalesF2                = 4000.f;
+  brewDeltaActive         = true;
+  weightTarget            = 0.f;
 }
 
 void valuesLoadFromEEPROM() {
@@ -1195,114 +1260,66 @@ void valuesLoadFromEEPROM() {
 
   // Loading the saved values fro EEPROM and sending them to the LCD
 
-  EEPROM.get(EEP_SETPOINT, init_val);// reading setpoint value from eeprom
-  if ( init_val > 0 ) {
-    myNex.writeNum("setPoint", init_val);
-    myNex.writeNum("moreTemp.n1.val", init_val);
-  }
-  EEPROM.get(EEP_OFFSET, init_val); // reading offset value from eeprom
-  if ( init_val >= 0 ) {
-    myNex.writeNum("offSet", init_val);
-    myNex.writeNum("moreTemp.n2.val", init_val);
-  }
-  EEPROM.get(EEP_HPWR, init_val);//reading HPWR value from eeprom
-  if (  init_val >= 0 ) {
-    myNex.writeNum("hpwr", init_val);
-    myNex.writeNum("moreTemp.n3.val", init_val);
-  }
-  EEPROM.get(EEP_M_DIVIDER, init_val);//reading main cycle div from eeprom
-  if ( init_val >= 1 ) {
-    myNex.writeNum("mDiv", init_val);
-    myNex.writeNum("moreTemp.n4.val", init_val);
-  }
-  EEPROM.get(EEP_B_DIVIDER, init_val);//reading brew cycle div from eeprom
-  if (  init_val >= 1 ) {
-    myNex.writeNum("bDiv", init_val);
-    myNex.writeNum("moreTemp.n5.val", init_val);
-  }
-  EEPROM.get(EEP_P_START, init_val);//reading pressure profile start value from eeprom
-  if (  init_val >= 0 ) {
-    myNex.writeNum("ppStart", init_val);
-    myNex.writeNum("brewAuto.n2.val", init_val);
-  }
+  EEPROM.get(EEP_SETPOINT, setPoint);// reading setpoint value from eeprom
+  EEPROM.get(EEP_OFFSET, offsetTemp); // reading offset value from eeprom
+  EEPROM.get(EEP_HPWR, HPWR);//reading HPWR value from eeprom
+  EEPROM.get(EEP_M_DIVIDER, MainCycleDivider);//reading main cycle div from eeprom
+  EEPROM.get(EEP_B_DIVIDER, BrewCycleDivider);//reading brew cycle div from eeprom
+  
+  EEPROM.get(EEP_PREINFUSION, preinfusionState);//reading preinfusion checkbox value from eeprom
+  EEPROM.get(EEP_PREINFUSION_SEC, preinfuseTime);//reading preinfusion time value from eeprom
+  EEPROM.get(EEP_PREINFUSION_BAR, preinfuseBar);//reading preinfusion pressure value from eeprom
+  EEPROM.get(EEP_PREINFUSION_SOAK, preinfuseSoak);//reading preinfusion soak times value from eeprom
 
-  EEPROM.get(EEP_P_FINISH, init_val);// reading pressure profile finish value from eeprom
-  if (  init_val >= 0 ) {
-    myNex.writeNum("ppFin", init_val);
-    myNex.writeNum("brewAuto.n3.val", init_val);
-  }
-  EEPROM.get(EEP_P_HOLD, init_val);// reading pressure profile hold value from eeprom
-  if (  init_val >= 0 ) {
-    myNex.writeNum("ppHold", init_val);
-    myNex.writeNum("brewAuto.n5.val", init_val);
-  }
-  EEPROM.get(EEP_P_LENGTH, init_val);// reading pressure profile length value from eeprom
-  if (  init_val >= 0 ) {
-    myNex.writeNum("ppLength", init_val);
-    myNex.writeNum("brewAuto.n6.val", init_val);
-  }
-
-  EEPROM.get(EEP_PREINFUSION, init_val);//reading preinfusion checkbox value from eeprom
-  if ( init_val >= 0 ) {
-    myNex.writeNum("piState", init_val);
-    myNex.writeNum("brewAuto.bt0.val", init_val);
-  }
-
-  EEPROM.get(EEP_P_PROFILE, init_val);//reading pressure profile checkbox value from eeprom
-  if ( init_val >= 0 ) {
-    myNex.writeNum("ppState", init_val);
-    myNex.writeNum("brewAuto.bt1.val", init_val);
-  }
-
-  EEPROM.get(EEP_PREINFUSION_SEC, init_val);//reading preinfusion time value from eeprom
-  if (init_val >= 0) {
-    myNex.writeNum("piSec", init_val);
-    myNex.writeNum("brewAuto.n0.val", init_val);
-  }
-
-  EEPROM.get(EEP_PREINFUSION_BAR, init_val);//reading preinfusion pressure value from eeprom
-  if (  init_val >= 0 ) {
-    myNex.writeNum("piBar", init_val);
-    myNex.writeNum("brewAuto.n1.val", init_val);
-  }
-  EEPROM.get(EEP_PREINFUSION_SOAK, init_val);//reading preinfusion soak times value from eeprom
-  if (  init_val >= 0 ) {
-    myNex.writeNum("piSoak", init_val);
-    myNex.writeNum("brewAuto.n4.val", init_val);
-  }
-  // Region POWER value
-  EEPROM.get(EEP_REGPWR_HZ, init_val);//reading region frequency value from eeprom
-  if (  init_val == 50 || init_val == 60 ) myNex.writeNum("regHz", init_val);
-
+  EEPROM.get(EEP_P_PROFILE, pressureProfileState);//reading pressure profile checkbox value from eeprom
+  EEPROM.get(EEP_P_START, ppStartBar);//reading pressure profile start value from eeprom
+  EEPROM.get(EEP_P_FINISH, ppFinishBar);// reading pressure profile finish value from eeprom
+  EEPROM.get(EEP_P_HOLD, ppHold);// reading pressure profile hold value from eeprom
+  EEPROM.get(EEP_P_LENGTH, ppLength);// reading pressure profile length value from eeprom
 
   // Brew page settings
   EEPROM.get(EEP_HOME_ON_SHOT_FINISH, init_val);//reading bre time value from eeprom
   if (  init_val == 0 || init_val == 1 ) {
     myNex.writeNum("homeOnBrewFinish", init_val);
-    myNex.writeNum("brewSettings.btGoHome.val", init_val);
   }
 
   EEPROM.get(EEP_GRAPH_BREW, init_val);//reading preinfusion pressure value from eeprom
   if (  init_val == 0 || init_val == 1) {
     myNex.writeNum("graphEnabled", init_val);
-    myNex.writeNum("brewSettings.btGraph.val", init_val);
   }
 
-  EEPROM.get(EEP_BREW_DELTA, init_val);//reading preinfusion pressure value from eeprom
-  if (  init_val == 0 || init_val == 1) {
-    myNex.writeNum("deltaState", init_val);
-    myNex.writeNum("brewSettings.btTempDelta.val", init_val);
-  }
+  EEPROM.get(EEP_BREW_DELTA, brewDeltaActive);//reading preinfusion pressure value from eeprom
 
   // Warmup checkbox value
-  EEPROM.get(EEP_WARMUP, init_val);//reading preinfusion pressure value from eeprom
-  if (  init_val == 0 || init_val == 1 ) {
-    myNex.writeNum("warmupState", init_val);
-    myNex.writeNum("morePower.bt0.val", init_val);
-  }
+  EEPROM.get(EEP_WARMUP, warmupEnabled);//reading preinfusion pressure value from eeprom
+  
   // Scales values
   EEPROM.get(EEP_SCALES_F1, scalesF1);//reading scale factors value from eeprom
-  EEPROM.get(EEP_SCALES_F2, scalesF2);//reading scale factors value from eeprom
+  EEPROM.get(EEP_SCALES_F2, scalesF2);//reading scale factors value from eeprom  
+
+  EEPROM.get(EEP_SHOT_TARGET_WEIGHT, weightTarget);
+}
+
+void valuesWriteToEEPROM() {
+    EEPROM.put(EEP_SETPOINT, setPoint);
+    EEPROM.put(EEP_OFFSET, offsetTemp);
+    EEPROM.put(EEP_HPWR, HPWR);
+    EEPROM.put(EEP_M_DIVIDER, MainCycleDivider);
+    EEPROM.put(EEP_B_DIVIDER, BrewCycleDivider);
+    EEPROM.put(EEP_PREINFUSION, preinfusionState);
+    EEPROM.put(EEP_PREINFUSION_SEC, preinfuseTime);
+    EEPROM.put(EEP_PREINFUSION_BAR, preinfuseBar);
+    EEPROM.put(EEP_PREINFUSION_SOAK, preinfuseSoak);
+    EEPROM.put(EEP_P_PROFILE, pressureProfileState);
+    EEPROM.put(EEP_P_START, ppStartBar);
+    EEPROM.put(EEP_P_FINISH, ppFinishBar);
+    EEPROM.put(EEP_P_HOLD, ppHold);
+    EEPROM.put(EEP_P_LENGTH, ppLength);
+    EEPROM.put(EEP_WARMUP, warmupEnabled);
+    EEPROM.put(EEP_SCALES_F1, scalesF1);
+    EEPROM.put(EEP_SCALES_F2, scalesF2);
+    EEPROM.put(EEP_BREW_DELTA, brewDeltaActive);
+    EEPROM.put(EEP_SHOT_TARGET_WEIGHT, weightTarget);
 }
 
 void ads1115Init() {
