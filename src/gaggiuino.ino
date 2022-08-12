@@ -887,13 +887,45 @@ void trigger3() {
   homeScreenScalesEnabled = myNex.readNumber("scalesEnabled");
 }
 
-void trigger11() {
-  //digitalWrite(valvePin, HIGH);
-  //pump.set(PUMP_RANGE);
+void trigger11() { // scales calibration
+  int command = myNex.readByte();
+  if (scalesPresent) {
+    long values[2];
+  #if defined(SINGLE_HX711_CLOCK)
+    if (LoadCells.is_ready()) {
+      LoadCells.read_average(values, 5U);
+    }
+  #else
+    values[0] = LoadCell_1.get_value(5U);
+    values[1] = LoadCell_2.get_value(5U);
+  #endif
+    uint32_t currentVal;
+    switch (command) {
+      case 0x01:
+        currentVal = myNex.readNumber("weight1.val");
+        myNex.writeNum("lc1.val", values[0] * 100 / (currentVal == 0 ? 1 : currentVal));
+        break;
+      case 0x02:
+        currentVal = myNex.readNumber("lc1.val");
+        myNex.writeNum("weight1.val", values[0] * 100 / (currentVal == 0 ? 1 : currentVal));
+        break;
+      case 0x03:
+        currentVal = myNex.readNumber("weight2.val");
+        myNex.writeNum("lc2.val", values[1] * 100 / (currentVal == 0 ? 1 : currentVal));
+        break;
+      case 0x04:
+        currentVal = myNex.readNumber("lc2.val");
+        myNex.writeNum("weight2.val", values[1] * 100 / (currentVal == 0 ? 1 : currentVal));
+        break;
+      default:
+        break;
+    }
+  }
 }
 
 void trigger12() {
-  flushUntil = millis() + 2000;
+  int duration = myNex.readByte();
+  flushUntil = millis() + duration * 1000;
   //digitalWrite(valvePin, LOW);
   //pump.set(0);
 }
