@@ -885,6 +885,9 @@ void trigger2() {
 
 void trigger3() {
   homeScreenScalesEnabled = myNex.readNumber("scalesEnabled");
+  if (homeScreenScalesEnabled) {
+    scalesTare();
+  }
 }
 
 void trigger11() { // scales calibration
@@ -959,8 +962,8 @@ bool steamState() {
   #endif
 }
 
-void brewTimer(bool c) { // small function for easier timer start/stop
-  myNex.writeNum("timerState", c ? 1 : 0);
+void brewTimer(uint32_t c) { // small function for easier timer start/stop
+  myNex.writeNum("timerState", c);
 }
 
 // Actuating the heater element
@@ -1125,7 +1128,8 @@ void manualPressureProfile() {
 //#############################################################################################
 
 void brewDetect() {
-  if ( brewState() && !stopOnWeight() ) {
+  bool bState = brewState();
+  if (bState && !stopOnWeight() ) {
     digitalWrite(valvePin, HIGH);
     /* Applying the below block only when brew detected */
     if (selectedOperationalMode == 0 || selectedOperationalMode == 1 || selectedOperationalMode == 2 || selectedOperationalMode == 3 || selectedOperationalMode == 4) {
@@ -1147,9 +1151,11 @@ void brewDetect() {
   } else {    
     digitalWrite(valvePin, LOW);
     pump.set(0);
-    brewTimer(0); // stopping timer
+    brewTimer(bState ? 2 : 0); // stopping timer
     brewActive = false;
-    weightTargetHit = false;
+    if (!bState) {
+      weightTargetHit = false;
+    }
     /* UPDATE VARIOUS INTRASHOT TIMERS and VARS */
     brewingTimer = millis();
     /* Only resetting the brew activity value if it's been previously set */
