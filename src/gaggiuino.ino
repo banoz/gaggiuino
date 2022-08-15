@@ -291,6 +291,10 @@ void loop() {
   pageValuesRefresh();
   myNex.NextionListen();
   sensorsRead();
+  if (myNex.currentPageId == 1 || myNex.currentPageId == 2 || myNex.currentPageId == 8 || homeScreenScalesEnabled ) {
+    /* Only setting the weight activity value if it's been previously unset */
+    calculateWeightAndFlow();
+  }
   brewDetect();
   modeSelect();
   lcdRefresh();
@@ -344,7 +348,7 @@ void sensorsRead() { // Reading the thermocouple temperature
   }
 
   // Weight output
-  if (scalesPresent && tareDone) {
+  if (scalesPresent) {
     if (millis() > scalesTimer) {
       #if defined(SINGLE_HX711_CLOCK)
         if (LoadCells.is_ready()) {
@@ -370,6 +374,9 @@ void calculateWeightAndFlow() {
         flowTimer = millis() + REFRESH_FLOW_EVERY;
       }
     }
+  } else {
+    flowVal = 0.f;
+    previousWeight = 0.f;
   }
 }
 
@@ -1129,18 +1136,26 @@ void manualPressureProfile() {
 
 void brewDetect() {
   bool bState = brewState();
-  if (bState && !stopOnWeight() ) {
+  if (bState) {
+    if (!brewActive) {
+      if (selectedOperationalMode == 0 || selectedOperationalMode == 1 || selectedOperationalMode == 2 || selectedOperationalMode == 3 || selectedOperationalMode == 4) {
+        scalesTare();
+        currentWeight = 0.f;
+        previousWeight = 0.f;
+      }
+    }    
+  }
+  bool stoppedOnWeight = stopOnWeight();  
+  if (brewActive && scalesPresent && stoppedOnWeight) {
+    myNex.writeNum("finalWeight", currentWeight > 0.f ? int(currentWeight * 10) : 0);
+  }
+  if (bState && !stoppedOnWeight) {
     digitalWrite(valvePin, HIGH);
     /* Applying the below block only when brew detected */
     if (selectedOperationalMode == 0 || selectedOperationalMode == 1 || selectedOperationalMode == 2 || selectedOperationalMode == 3 || selectedOperationalMode == 4) {
       if (!brewActive) {
-        scalesTare();
-        currentWeight = 0.f;
-        previousWeight = 0.f;
         preinfusionFinished = false;
-        myNex.writeNum("warmupState", 0); // Flaggig warmup notification on Nextion needs to stop (if enabled)
       }
-      if (myNex.currentPageId == 1 || myNex.currentPageId == 2 || myNex.currentPageId == 8 || homeScreenScalesEnabled ) calculateWeightAndFlow();
     } else if (selectedOperationalMode == 5 || selectedOperationalMode == 9) {
       pump.set(PUMP_RANGE); // setting the pump output target to 9 bars for non PP or PI profiles
     }
@@ -1149,9 +1164,9 @@ void brewDetect() {
     }
     brewActive = true;
   } else {    
-    digitalWrite(valvePin, LOW);
     pump.set(0);
-    brewTimer(bState ? 2 : 0); // stopping timer
+    digitalWrite(valvePin, LOW);
+    brewTimer(bState ? 2 : 0); // stopping timer    
     brewActive = false;
     if (!bState) {
       weightTargetHit = false;
@@ -1160,14 +1175,6 @@ void brewDetect() {
     brewingTimer = millis();
     /* Only resetting the brew activity value if it's been previously set */
     preinfusionFinished = false;
-    if (myNex.currentPageId == 1 || myNex.currentPageId == 2 || myNex.currentPageId == 8 || homeScreenScalesEnabled ) {
-      /* Only setting the weight activity value if it's been previously unset */
-      calculateWeightAndFlow();
-    } else {/* Only resetting the scales values if on any other screens than brew or scales */
-      tareDone = false;
-      currentWeight = 0.f;
-      previousWeight = 0.f;
-    }
   }
 }
 
@@ -1180,9 +1187,8 @@ void scalesInit() {
 
     delay(500);
 
-    if (LoadCells.is_ready()) {
+    if (LoadCells.wait_ready_timeout()) {
       LoadCells.tare(5);
-      tareDone = true;
       scalesPresent = true;
     }
   #else
@@ -1202,11 +1208,11 @@ void scalesInit() {
 }
 
 void scalesTare() {
-  tareDone = false;
   if (scalesPresent) {
     #if defined(SINGLE_HX711_CLOCK)
-      if (LoadCells.is_ready()) 
+      if (LoadCells.wait_ready_timeout(300UL)) {
         LoadCells.tare(5);
+      }
     #else
       if (LoadCell_1.wait_ready_timeout(300) && LoadCell_2.wait_ready_timeout(300)) {
         LoadCell_1.tare(2);
