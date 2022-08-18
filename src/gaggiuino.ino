@@ -90,9 +90,9 @@
 #define GET_SCALES_READ_EVERY 200
 #define REFRESH_SCREEN_EVERY 250 // Screen refresh interval (ms)
 #define REFRESH_FLOW_EVERY 1000
-#define DESCALE_PHASE1_EVERY 500 // short pump pulses during descale
-#define DESCALE_PHASE2_EVERY 5000 // short pause for pulse effficience activation
-#define DESCALE_PHASE3_EVERY 120000 // long pause for scale softening
+#define DESCALE_PHASE1_EVERY 60000 // short pump pulses during descale
+#define DESCALE_PHASE2_EVERY 120000 // long pause for scale softening
+#define DESCALE_PHASE3_EVERY 4000 // short pause for pulse effficience activation
 #define DELTA_RANGE 0.25f // % to apply as delta
 #define MAX_SETPOINT_VALUE 110 //Defines the max value of the setpoint
 #define EEPROM_RESET 1 //change this value if want to reset to defaults
@@ -140,6 +140,7 @@ unsigned long thermoTimer = 0;
 unsigned long scalesTimer = 0;
 unsigned long flowTimer = 0;
 unsigned long pageRefreshTimer = 0;
+unsigned long modeRefreshTimer = 0;
 unsigned long brewingTimer = 0;
 
 //volatile vars
@@ -177,12 +178,11 @@ int preInfusionFinishedPhaseIdx = 3;
 
 bool preinfusionFinished;
 
-bool POWER_ON;
 bool  preinfusionState;
 bool  pressureProfileState;
 bool  warmupEnabled;
-bool  flushEnabled;
-bool  descaleEnabled;
+//bool  flushEnabled;
+//bool  descaleEnabled;
 bool brewDeltaActive;
 bool homeScreenScalesEnabled;
 int  HPWR;
@@ -273,8 +273,7 @@ void setup() {
 
   // Scales handling
   scalesInit();
-  myNex.lastCurrentPageId = myNex.currentPageId;
-  POWER_ON = true;
+  myNex.lastCurrentPageId = -1;
 
   myNex.writeNum("cps", pump.cps());
 
@@ -288,15 +287,15 @@ void setup() {
 
 //Main loop where all the logic is continuously run
 void loop() {
-  pageValuesRefresh();
-  myNex.NextionListen();
   sensorsRead();
+  myNex.NextionListen();
+  pageValuesRefresh();
+  brewDetect();
+  modeSelect();
   if (myNex.currentPageId == 1 || myNex.currentPageId == 2 || myNex.currentPageId == 8 || homeScreenScalesEnabled ) {
     /* Only setting the weight activity value if it's been previously unset */
     calculateWeightAndFlow();
   }
-  brewDetect();
-  modeSelect();
   lcdRefresh();
 }
 
@@ -382,8 +381,8 @@ void calculateWeightAndFlow() {
 
 // Stops the pump if setting active and dose/weight conditions met
 bool stopOnWeight() {
-  if (selectedOperationalMode == 0 || selectedOperationalMode == 1 || selectedOperationalMode == 2 || selectedOperationalMode == 3 || selectedOperationalMode == 4) {
-    if (weightTarget > 1) {
+  if (selectedOperationalMode <= 4) {
+    if (scalesPresent && weightTarget > 1) {
       if (weightTargetHit || (currentWeight + .5f) >= weightTarget) {
         weightTargetHit = true;
         return true;
@@ -505,39 +504,15 @@ void setPressure(float targetValue) {
 //##############################################################################################################################
 
 void pageValuesRefresh() {  // Refreshing our values on page changes
-
-  if ( myNex.currentPageId != myNex.lastCurrentPageId || POWER_ON == true ) {
-    /*preinfusionState        = myNex.readNumber("piState"); // reding the preinfusion state value which should be 0 or 1
-    preinfuseTime           = myNex.readNumber("piSec");
-    preinfuseBar            = myNex.readNumber("piBar");
-    preinfuseSoak           = myNex.readNumber("piSoak"); // pre-infusion soak value
-    pressureProfileState    = myNex.readNumber("ppState"); // reding the pressure profile state value which should be 0 or 1
-    ppStartBar              = myNex.readNumber("ppStart");
-    ppFinishBar             = myNex.readNumber("ppFin");
-    ppHold                  = myNex.readNumber("ppHold"); // pp start pressure hold
-    ppLength                = myNex.readNumber("ppLength"); // pp shot length
-    setPoint                = myNex.readNumber("setPoint");  // reading the setPoint value from the lcd
-    offsetTemp              = myNex.readNumber("offSet");  // reading the offset value from the lcd
-    HPWR                    = myNex.readNumber("hpwr");  // reading the brew time delay used to apply heating in waves
-    MainCycleDivider        = myNex.readNumber("mDiv");  // reading the delay divider
-    BrewCycleDivider        = myNex.readNumber("bDiv");  // reading the delay divider
-    warmupEnabled           = myNex.readNumber("warmupState");
-    scalesF1                = myNex.readNumber("scalesF1");
-    scalesF2                = myNex.readNumber("scalesF2");
-    brewDeltaActive         = myNex.readNumber("deltaState");
-    weightTarget            = myNex.readNumber("weightTarget");*/
-
-    flushEnabled            = myNex.readNumber("flushState");
-    descaleEnabled          = myNex.readNumber("descaleState");
-    homeScreenScalesEnabled = myNex.readNumber("scalesEnabled");
-
-    // MODE_SELECT should always be last
-    selectedOperationalMode = myNex.readNumber("modeSelect");
-
-    updatePressureProfilePhases();
-
+  if (myNex.currentPageId != myNex.lastCurrentPageId) {
     myNex.lastCurrentPageId = myNex.currentPageId;
-    POWER_ON = false;
+    modeRefreshTimer = millis() + 500;
+  }
+
+  if (millis() > modeRefreshTimer) {
+    selectedOperationalMode = myNex.readNumber("modeSelect");
+    updatePressureProfilePhases();
+    modeRefreshTimer = millis() + 1500;
   }
 }
 
@@ -579,8 +554,6 @@ void modeSelect() {
       else steamCtrl();
       break;
     default:
-      POWER_ON = true;
-      pageValuesRefresh();
       break;
   }
   // USART_CH1.println("MODE SELECT EXIT");
@@ -695,10 +668,8 @@ void steamCtrl() {
   } else if (brewActive) { //added to cater for hot water from steam wand functionality
     if ((kProbeReadValue > setPoint-10.f) && (kProbeReadValue <= 105.f)) {
       setBoiler(HIGH);
-      setPressure(9);
     } else {
       setBoiler(LOW);
-      setPressure(9);
     }
   } else setBoiler(LOW);
 }
@@ -726,6 +697,7 @@ void lcdRefresh() {
     pageRefreshTimer = millis() + REFRESH_SCREEN_EVERY;
   }
 }
+
 //#############################################################################################
 //###################################____SAVE_BUTTON____#######################################
 //#############################################################################################
@@ -1002,51 +974,60 @@ void setBoiler(int val) {
 
 void deScale() {
   static bool blink = true;
-  static long timer = millis();
-  static int currentCycleRead = myNex.readNumber("j0.val");
-  static int lastCycleRead = 10;
+  static long timer = 0;
+  static int currentCycleRead = 0;
+  static int lastCycleRead = 0;
   static bool descaleFinished = false;
   if (brewActive && !descaleFinished) {
     if (currentCycleRead < lastCycleRead) { // descale in cycles for 5 times then wait according to the below condition
       if (blink == true) { // Logic that switches between modes depending on the $blink value
-        pump.set(15);
-        if (millis() - timer > DESCALE_PHASE1_EVERY) { //set dimmer power to max descale value for 10 sec
-          if (currentCycleRead >=100) descaleFinished = true;
+        pump.set(10);
+        if (millis() - timer > DESCALE_PHASE1_EVERY) { // 60 sec
           blink = false;
-          currentCycleRead = myNex.readNumber("j0.val");
           timer = millis();
         }
       } else {
-        pump.set(30);
-        if (millis() - timer > DESCALE_PHASE2_EVERY) { //set dimmer power to min descale value for 20 sec
+        pump.set(0);
+        if (millis() - timer > DESCALE_PHASE2_EVERY) { // nothing for 120 sec
           blink = true;
-          currentCycleRead++;
-          if (currentCycleRead<100) myNex.writeNum("j0.val", currentCycleRead);
+          currentCycleRead += 6;
           timer = millis();
         }
       }
     } else {
-      pump.set(0);
-      if ((millis() - timer) > DESCALE_PHASE3_EVERY) { //nothing for 5 minutes
-        if (currentCycleRead*3 < 100) myNex.writeNum("j0.val", currentCycleRead*3);
-        else {
-          myNex.writeNum("j0.val", 100);
-          descaleFinished = true;
-        }
-        lastCycleRead = currentCycleRead*3;
+      pump.set(30);
+      if ((millis() - timer) > DESCALE_PHASE3_EVERY) { //set dimmer power to max descale value for 4 sec
+        solenoidBeat();
+        blink = true;
+        currentCycleRead += 4; // need an overflow on 3rd cycle (34 -> 68 -> 102)
+        lastCycleRead += 33;
         timer = millis();
       }
     }
-  } else if (brewActive && descaleFinished == true){
+
+    if (currentCycleRead >= 100) {
+      descaleFinished = true;
+    }
+
+    if (millis() > pageRefreshTimer) {
+      if (currentCycleRead < 100) {
+        myNex.writeNum("j0.val", currentCycleRead);
+      } else {
+        myNex.writeNum("j0.val", 100);
+      }
+    }
+  } else if (brewActive && descaleFinished) {
     pump.set(0);
     if ((millis() - timer) > 1000) {
       brewTimer(0);
       myNex.writeStr("t14.txt", "FINISHED!");
-      timer=millis();
+      timer = millis();
     }
   } else {
+    pump.set(0);
+    blink = true;
     currentCycleRead = 0;
-    lastCycleRead = 10;
+    lastCycleRead = 33;
     descaleFinished = false;
     timer = millis();
   }
@@ -1054,6 +1035,21 @@ void deScale() {
   justDoCoffee();
 }
 
+void solenoidBeat() {
+  pump.set(PUMP_RANGE);
+  digitalWrite(valvePin, LOW);
+  delay(200);
+  digitalWrite(valvePin, HIGH);
+  delay(200);
+  digitalWrite(valvePin, LOW);
+  delay(200);
+  digitalWrite(valvePin, HIGH);
+  delay(200);
+  digitalWrite(valvePin, LOW);
+  delay(200);
+  digitalWrite(valvePin, HIGH);
+  pump.set(0);
+}
 
 //#############################################################################################
 //###############################____PRESSURE_CONTROL____######################################
@@ -1138,7 +1134,7 @@ void brewDetect() {
   bool bState = brewState();
   if (bState) {
     if (!brewActive) {
-      if (selectedOperationalMode == 0 || selectedOperationalMode == 1 || selectedOperationalMode == 2 || selectedOperationalMode == 3 || selectedOperationalMode == 4) {
+      if (selectedOperationalMode <= 4) {
         scalesTare();
         currentWeight = 0.f;
         previousWeight = 0.f;
@@ -1152,12 +1148,14 @@ void brewDetect() {
   if (bState && !stoppedOnWeight) {
     digitalWrite(valvePin, HIGH);
     /* Applying the below block only when brew detected */
-    if (selectedOperationalMode == 0 || selectedOperationalMode == 1 || selectedOperationalMode == 2 || selectedOperationalMode == 3 || selectedOperationalMode == 4) {
+    if (selectedOperationalMode <= 4) {
       if (!brewActive) {
         preinfusionFinished = false;
       }
-    } else if (selectedOperationalMode == 5 || selectedOperationalMode == 9) {
+    } else if (selectedOperationalMode == 5) {
       pump.set(PUMP_RANGE); // setting the pump output target to 9 bars for non PP or PI profiles
+    } else if (selectedOperationalMode == 9) {
+      setPressure(9);
     }
     if (!brewActive) {
       brewTimer(1); // starting the timer
@@ -1210,7 +1208,7 @@ void scalesInit() {
 void scalesTare() {
   if (scalesPresent) {
     #if defined(SINGLE_HX711_CLOCK)
-      if (LoadCells.wait_ready_timeout(300UL)) {
+      if (LoadCells.wait_ready_timeout()) {
         LoadCells.tare(5);
       }
     #else
