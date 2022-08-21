@@ -984,13 +984,14 @@ void deScale() {
         pump.set(10);
         if (millis() - timer > DESCALE_PHASE1_EVERY) { // 60 sec
           blink = false;
+          currentCycleRead += 2;
           timer = millis();
         }
       } else {
         pump.set(0);
         if (millis() - timer > DESCALE_PHASE2_EVERY) { // nothing for 120 sec
           blink = true;
-          currentCycleRead += 6;
+          currentCycleRead += 4;
           timer = millis();
         }
       }
@@ -1027,7 +1028,7 @@ void deScale() {
     pump.set(0);
     blink = true;
     currentCycleRead = 0;
-    lastCycleRead = 33;
+    lastCycleRead = 30;
     descaleFinished = false;
     timer = millis();
   }
