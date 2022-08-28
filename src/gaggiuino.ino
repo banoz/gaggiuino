@@ -162,6 +162,7 @@ bool tareDone;
 
 // brew detection vars
 bool brewActive;
+unsigned long brewUntil;
 unsigned long flushUntil;
 
 //PP&PI variables
@@ -226,7 +227,9 @@ float weightTarget; // tenths of grams
 #define  EEP_SHOT_TARGET_WEIGHT  230
 
 void setup() {
-  // USART_DEBUG.begin(115200); //debug channel
+  #ifdef USART_DEBUG
+    USART_DEBUG.begin(115200); //debug channel
+  #endif
   USART_LCD.begin(115200); // LCD comms channel
   
   // Various pins operation mode handling
@@ -912,12 +915,23 @@ void trigger12() {
   //pump.set(0);
 }
 
+void trigger13() {
+  int duration = myNex.readByte();
+  brewUntil = millis() + duration * 1000;
+  //digitalWrite(valvePin, LOW);
+  //pump.set(0);
+}
+
 //#############################################################################################
 //###############################_____HELPER_FUCTIONS____######################################
 //#############################################################################################
 
 //Function to get the state of the brew switch button
-bool brewState() {
+bool brewState() {  
+  if (selectedOperationalMode < 5 && brewUntil > millis()) {
+    return true;
+  }
+
   if (selectedOperationalMode == 5 && flushUntil > millis()) {
     return true;
   }
