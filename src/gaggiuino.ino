@@ -163,6 +163,7 @@ bool tareDone;
 // brew detection vars
 bool brewActive;
 unsigned long brewUntil;
+unsigned long steamUntil;
 unsigned long flushUntil;
 
 //PP&PI variables
@@ -280,6 +281,10 @@ void setup() {
 
   myNex.writeNum("cps", pump.cps());
 
+  #ifdef NO_PHYSICAL_BUTTONS
+  myNex.writeNum("physicalButtons", 0);
+  #endif
+  
   // USART_CH1.println("Init step 6");
 }
 
@@ -664,10 +669,10 @@ void justDoCoffee() {
 void steamCtrl() {
 
   if (!brewActive) {
-    if (livePressure <= 9.f) { // steam temp control, needs to be aggressive to keep steam pressure acceptable
+    if (livePressure <= 6.f) { // steam temp control, needs to be aggressive to keep steam pressure acceptable
       if ((kProbeReadValue > setPoint-10.f) && (kProbeReadValue <= 155.f)) setBoiler(HIGH);
       else setBoiler(LOW);
-    } else if(livePressure >= 9.1f) setBoiler(LOW);
+    } else setBoiler(LOW);
   } else if (brewActive) { //added to cater for hot water from steam wand functionality
     if ((kProbeReadValue > setPoint-10.f) && (kProbeReadValue <= 105.f)) {
       setBoiler(HIGH);
@@ -910,16 +915,38 @@ void trigger11() { // scales calibration
 
 void trigger12() {
   int duration = myNex.readByte();
-  flushUntil = millis() + duration * 1000;
-  //digitalWrite(valvePin, LOW);
-  //pump.set(0);
+  if (duration == 0)
+  {
+    flushUntil = 0;
+  }
+  else
+  {
+    flushUntil = millis() + duration * 1000;
+  }
 }
 
 void trigger13() {
   int duration = myNex.readByte();
-  brewUntil = millis() + duration * 1000;
-  //digitalWrite(valvePin, LOW);
-  //pump.set(0);
+  if (duration == 0)
+  {
+    brewUntil = 0;
+  }
+  else
+  {
+    brewUntil = millis() + duration * 1000;
+  }
+}
+
+void trigger14() {
+  int duration = myNex.readByte();
+  if (duration == 0)
+  {
+    steamUntil = 0;
+  }
+  else
+  {
+    steamUntil = millis() + duration * 1000;
+  }
 }
 
 //#############################################################################################
@@ -928,10 +955,9 @@ void trigger13() {
 
 //Function to get the state of the brew switch button
 bool brewState() {  
-  if (selectedOperationalMode < 5 && brewUntil > millis()) {
+  if (selectedOperationalMode <= 4 && brewUntil > millis()) {
     return true;
   }
-
   if (selectedOperationalMode == 5 && flushUntil > millis()) {
     return true;
   }
@@ -946,6 +972,9 @@ bool brewState() {
 
 //Function to get the state of the steam switch button
 bool steamState() {
+  if ((selectedOperationalMode <= 4 || selectedOperationalMode == 9) && steamUntil > millis()) {
+    return true;
+  }
   #if defined(ARDUINO_ARCH_AVR) && defined(ADCINTERRUPT_ENABLED)
     return adcInitialized ? (uint8_t)adcData[3] < 128U : false;
   #elif defined(ARDUINO_ARCH_AVR)
