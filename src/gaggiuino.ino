@@ -13,12 +13,17 @@
 #else
   #include <max6675.h>
 #endif
-#if defined(SINGLE_HX711_CLOCK)
+#ifdef BT_SCALES
+  #include <Wire.h>
+#elif defined(SINGLE_HX711_CLOCK)
   #include <HX711_2.h>
-#else
+#elif defined(DUAL_HX711_CLOCK)
   #include <HX711.h>
 #endif
 #include <PSM.h>
+#include <NCP5623.h>
+#include <VL53L0X.h>
+
 #include "PressureProfile.h"
 
 #if defined(ARDUINO_ARCH_AVR)
@@ -88,6 +93,7 @@
 #define GET_KTYPE_READ_EVERY 250 // thermocouple data read interval not recommended to be changed to lower than 250 (ms)
 #define GET_PRESSURE_READ_EVERY 100
 #define GET_SCALES_READ_EVERY 200
+#define GET_TANK_LEVEL_READ_EVERY 10000
 #define REFRESH_SCREEN_EVERY 250 // Screen refresh interval (ms)
 #define REFRESH_FLOW_EVERY 1000
 #define DESCALE_PHASE1_EVERY 60000 // short pump pulses during descale
@@ -125,13 +131,21 @@ EasyNex myNex(USART_LCD);
 //Banoz PSM - for more cool shit visit https://github.com/banoz  and don't forget to star
 PSM pump(zcPin, dimmerPin, PUMP_RANGE, ZC_MODE, ZC_DIVIDER, 4);
 //#######################__HX711_stuff__##################################
-#if defined(SINGLE_HX711_CLOCK)
+#ifdef BT_SCALES
+  #define BT_SCALES_ADDR 0x2a
+#elif defined(SINGLE_HX711_CLOCK)
 HX711_2 LoadCells;
-#else
+#elif defined(DUAL_HX711_CLOCK)
 HX711 LoadCell_1; //HX711 1
 HX711 LoadCell_2; //HX711 2
 #endif
 
+#ifdef KC9ZDA_NCP5623_H
+NCP5623 tankLED;
+#endif
+#ifdef VL53L0X_h
+VL53L0X tankSensor;
+#endif
 
 // Some vars are better global
 //Timers
@@ -142,13 +156,17 @@ unsigned long flowTimer = 0;
 unsigned long pageRefreshTimer = 0;
 unsigned long modeRefreshTimer = 0;
 unsigned long brewingTimer = 0;
+unsigned long tankLevelTimer = 0;
 
 //volatile vars
 volatile float kProbeReadValue; //temp val
 volatile float livePressure;
 volatile float liveWeight;
+volatile uint16_t tankLevel;
 volatile bool isPressureFalling;
 volatile bool weightTargetHit;
+volatile char timerState;
+
 //scales vars
 /* If building for STM32 define the scales factors here */
 float scalesF1 = 2407.5f;
@@ -159,6 +177,8 @@ float flowVal;
 
 bool scalesPresent;
 bool tareDone;
+
+bool tankSensorPresent;
 
 // brew detection vars
 bool brewActive;
@@ -254,6 +274,18 @@ void setup() {
   pump.set(0);
 
   digitalWrite(valvePin, LOW);
+  
+  #ifdef KC9ZDA_NCP5623_H
+  tankLED.begin();
+  tankLED.setColor(255, 255, 255);
+  #endif
+  #ifdef VL53L0X_h
+  tankSensor.setTimeout(500);
+  tankSensorPresent = tankSensor.init();
+  #endif
+  #ifdef VL53L0X_H
+  tankSensorPresent = vl53l0x_init();
+  #endif
 
   // USART_CH1.println("Init step 4");
   // Will wait hereuntil full serial is established, this is done so the LCD fully initializes before passing the EEPROM values
@@ -277,6 +309,9 @@ void setup() {
 
   // Scales handling
   scalesInit();
+
+  myNex.writeNum("scalesPresent", scalesPresent ? 1 : 0);
+
   myNex.lastCurrentPageId = -1;
 
   myNex.writeNum("cps", pump.cps());
@@ -284,7 +319,11 @@ void setup() {
   #ifdef NO_PHYSICAL_BUTTONS
   myNex.writeNum("physicalButtons", 0);
   #endif
-  
+
+  #ifdef KC9ZDA_NCP5623_H
+  tankLED.setColor(255, 87, 95); // 64171
+  #endif
+
   // USART_CH1.println("Init step 6");
 }
 
@@ -357,19 +396,48 @@ void sensorsRead() { // Reading the thermocouple temperature
   // Weight output
   if (scalesPresent) {
     if (millis() > scalesTimer) {
-      #if defined(SINGLE_HX711_CLOCK)
+      #ifdef BT_SCALES
+        if (Wire.requestFrom(BT_SCALES_ADDR, 2) == 2) {
+          uint8_t receivedWeightHighByte = Wire.read();
+          uint8_t receivedWeightLowByte = Wire.read();
+          int16_t receivedWeightData = ((receivedWeightHighByte << 8) | receivedWeightLowByte);
+          currentWeight = receivedWeightData / 10.f;
+        } else {
+          currentWeight = 0;
+        }
+      #elif defined(SINGLE_HX711_CLOCK)
         if (LoadCells.is_ready()) {
           float values[2];
           LoadCells.get_units(values);
           currentWeight = values[0] + values[1];
         }
-      #else
+      #elif defined(DUAL_HX711_CLOCK)
         currentWeight = LoadCell_1.get_units() + LoadCell_2.get_units();
       #endif
       
       scalesTimer = getNextMillis(GET_SCALES_READ_EVERY);
     }
   }
+  
+  #ifdef VL53L0X_h
+  if (tankSensorPresent) {
+    if (millis() > tankLevelTimer) {    
+      tankLevel = tankSensor.readRangeSingleMillimeters();
+      tankLevelTimer = getNextMillis(GET_TANK_LEVEL_READ_EVERY);
+    }
+  }
+  #endif  
+  #ifdef VL53L0X_H
+  if (tankSensorPresent) {
+    if (millis() > tankLevelTimer) {  
+      uint16_t range;
+      if (vl53l0x_read_range_single(vl53l0x_idx_t::VL53L0X_IDX_FIRST, &range)) {
+        tankLevel = range;
+      }
+      tankLevelTimer = getNextMillis(GET_TANK_LEVEL_READ_EVERY);
+    }
+  }
+  #endif
 }
 
 void calculateWeightAndFlow() {
@@ -689,6 +757,12 @@ void lcdRefresh() {
     /*LCD flow output*/
     myNex.writeNum("cf", flowVal > 0.f ? int(flowVal * 10) : 0);
 
+    if (!brewActive && tankSensorPresent) {
+      myNex.writeNum("tl", int(tankLevel));      
+    }
+
+    myNex.writeNum("timerState", timerState);
+
     myNex.writeNum("ms", millis());
 
     dbgOutput();
@@ -868,6 +942,16 @@ void trigger3() {
   }
 }
 
+void trigger9() {
+  uint8_t led_R = myNex.readByte();
+  uint8_t led_G = myNex.readByte();
+  uint8_t led_B = myNex.readByte();
+
+  #ifdef KC9ZDA_NCP5623_H
+  tankLED.setColor(led_R, led_G, led_B);
+  #endif
+}
+
 void trigger11() { // scales calibration
   int command = myNex.readByte();
   if (scalesPresent) {
@@ -876,7 +960,7 @@ void trigger11() { // scales calibration
     if (LoadCells.is_ready()) {
       LoadCells.read_average(values, 5U);
     }
-  #else
+  #elif defined(DUAL_HX711_CLOCK)
     values[0] = LoadCell_1.get_value(5U);
     values[1] = LoadCell_2.get_value(5U);
   #endif
@@ -975,10 +1059,6 @@ bool steamState() {
   #endif
 }
 
-void brewTimer(uint32_t c) { // small function for easier timer start/stop
-  myNex.writeNum("timerState", c);
-}
-
 // Actuating the heater element
 void setBoiler(int val) {
   // USART_CH1.println("SET_BOILER BEGIN");
@@ -1054,7 +1134,7 @@ void deScale() {
   } else if (brewActive && descaleFinished) {
     pump.set(0);
     if ((millis() - timer) > 1000) {
-      brewTimer(0);
+      timerState = 0;
       myNex.writeStr("t14.txt", "FINISHED!");
       timer = millis();
     }
@@ -1193,13 +1273,13 @@ void brewDetect() {
       setPressure(9);
     }
     if (!brewActive) {
-      brewTimer(1); // starting the timer
+      timerState = 1; // starting the timer
     }
     brewActive = true;
   } else {    
     pump.set(0);
     digitalWrite(valvePin, LOW);
-    brewTimer(bState ? 2 : 0); // stopping timer    
+    timerState = bState ? 2 : 0; // stopping timer    
     brewActive = false;
     if (!bState) {
       weightTargetHit = false;
@@ -1212,8 +1292,12 @@ void brewDetect() {
 }
 
 void scalesInit() {
-
-  #if defined(SINGLE_HX711_CLOCK)
+  #ifdef BT_SCALES  
+    delay(3000);
+    Wire.begin();
+    Wire.beginTransmission(BT_SCALES_ADDR);
+    scalesPresent = Wire.endTransmission() == 0;
+  #elif defined(SINGLE_HX711_CLOCK)
     LoadCells.begin(HX711_dout_1, HX711_dout_2, HX711_sck_1);
     LoadCells.set_scale(scalesF1, scalesF2);
     LoadCells.power_up();
@@ -1224,7 +1308,7 @@ void scalesInit() {
       LoadCells.tare(5);
       scalesPresent = true;
     }
-  #else
+  #elif defined(DUAL_HX711_CLOCK)
     LoadCell_1.begin(HX711_dout_1, HX711_sck_1);
     LoadCell_2.begin(HX711_dout_2, HX711_sck_2);
     LoadCell_1.set_scale(scalesF1); // calibrated val1
@@ -1242,11 +1326,16 @@ void scalesInit() {
 
 void scalesTare() {
   if (scalesPresent) {
-    #if defined(SINGLE_HX711_CLOCK)
+    #ifdef BT_SCALES  
+      Wire.beginTransmission(BT_SCALES_ADDR);
+      Wire.write(0x03);
+      Wire.write(0x0f);
+      Wire.endTransmission();
+    #elif defined(SINGLE_HX711_CLOCK)
       if (LoadCells.wait_ready_timeout()) {
         LoadCells.tare(5);
       }
-    #else
+    #elif defined(DUAL_HX711_CLOCK)
       if (LoadCell_1.wait_ready_timeout(300) && LoadCell_2.wait_ready_timeout(300)) {
         LoadCell_1.tare(2);
         LoadCell_2.tare(2);
