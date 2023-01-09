@@ -41,7 +41,7 @@
   #define HX711_dout_1 A2 //mcu > HX711 no 1 dout pin
   #define HX711_dout_2 A3 //mcu > HX711 no 2 dout pin
   #define HX711_sck_1 A1 //mcu > HX711 no 1 sck pin
-  #define HX711_sck_2 -1 //mcu > HX711 no 2 sck pin
+  #define HX711_sck_2 254 //mcu > HX711 no 2 sck pin
   #define USART_LCD Serial
 
   #if defined(ADCINTERRUPT_ENABLED)
@@ -61,7 +61,7 @@
   #define pressurePin ADS115_A0 //set here just for reference
   #define steamPin PB0
   #define HX711_sck_1 PA1 //mcu > HX711 no 1 sck pin
-  #define HX711_sck_2 -1 // no connection
+  #define HX711_sck_2 NC // no connection
   #define HX711_dout_1 PA2 //mcu > HX711 no 1 dout pin
   #define HX711_dout_2 PA3 //mcu > HX711 no 2 dout pin
   #define USART_LCD Serial1
@@ -81,7 +81,7 @@
   #define relay1Pin PB13
   #define relay2Pin PB12
   #define HX711_sck_1 PB0 //mcu > HX711 no 1 sck pin
-  #define HX711_sck_2 -1 // no connection
+  #define HX711_sck_2 NC // no connection
   #define HX711_dout_1 PB8 //mcu > HX711 no 1 dout pin
   #define HX711_dout_2 PB9 //mcu > HX711 no 2 dout pin
   #define USART_LCD Serial2 // PA2 & PA3
