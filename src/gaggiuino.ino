@@ -90,7 +90,7 @@
 #endif
 
 // Define some const values
-#define GET_KTYPE_READ_EVERY 250 // thermocouple data read interval not recommended to be changed to lower than 250 (ms)
+#define GET_KTYPE_READ_EVERY 500 // thermocouple data read interval not recommended to be changed to lower than 250 (ms)
 #define GET_PRESSURE_READ_EVERY 100
 #define GET_SCALES_READ_EVERY 200
 #define GET_TANK_LEVEL_READ_EVERY 10000
