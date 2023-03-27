@@ -3,3 +3,5 @@
 .pio/
 src/.theia/
 src/build
+*.ino.cpp
+extra_defines.ini
