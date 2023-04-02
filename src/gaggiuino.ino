@@ -40,7 +40,7 @@
   #define USART_LCD Serial
 
   #if defined(ADCINTERRUPT_ENABLED)
-    void initPressure();
+    void initADC();
     void adcISR();
   #endif
 #elif defined(ARDUINO_ARCH_STM32_V1)// if arch is stm32
@@ -99,10 +99,8 @@
 #define PUMP_RANGE 127
 #if defined(ARDUINO_ARCH_AVR)
   #define ZC_MODE FALLING
-  #define ZC_DIVIDER 1
 #else
   #define ZC_MODE RISING
-  #define ZC_DIVIDER 2
 #endif
 
 #if defined(ARDUINO_ARCH_STM32_V1)// if arch is stm32
@@ -123,7 +121,7 @@
 // EasyNextion object init
 EasyNex myNex(USART_LCD);
 //Banoz PSM - for more cool shit visit https://github.com/banoz  and don't forget to star
-PSM pump(zcPin, dimmerPin, PUMP_RANGE, ZC_MODE, ZC_DIVIDER, 4);
+PSM pump(zcPin, dimmerPin, PUMP_RANGE, ZC_MODE, 1, 4);
 //#######################__HX711_stuff__##################################
 #if defined(SINGLE_HX711_CLOCK)
 HX711_2 LoadCells;
@@ -232,7 +230,7 @@ void setup() {
     USART_DEBUG.begin(115200); //debug channel
   #endif
   USART_LCD.begin(115200); // LCD comms channel
-  
+
   // Various pins operation mode handling
   pinInit();
 
@@ -255,6 +253,27 @@ void setup() {
 
   digitalWrite(valvePin, LOW);
 
+  unsigned int cps = pump.cps();
+
+  if (cps > 80u) {
+    pump.setDivider(2);
+  }
+
+#if defined(ARDUINO_ARCH_AVR) && defined(ADCINTERRUPT_ENABLED)
+  initADC();
+  delay(100);
+#endif
+
+  while (brewState()) {
+    lcdShowPopup("Brew Switch ON!");
+    delay(0);
+  }
+
+  while (steamState()) {
+    lcdShowPopup("Steam Switch ON!");
+    delay(0);
+  }
+
   // USART_CH1.println("Init step 4");
   // Will wait hereuntil full serial is established, this is done so the LCD fully initializes before passing the EEPROM values
   while (myNex.readNumber("safetyTempCheck") != 100 )
@@ -266,11 +285,6 @@ void setup() {
   // Initialising the vsaved values or writing defaults if first start
   eepromInit();
 
-  #if defined(ARDUINO_ARCH_AVR) && defined(ADCINTERRUPT_ENABLED)
-    initPressure();
-    delay(100);
-  #endif
-
   #if defined(ADAFRUIT_MAX31855_H)
     thermocouple.begin();
   #endif
@@ -279,12 +293,12 @@ void setup() {
   scalesInit();
   myNex.lastCurrentPageId = -1;
 
-  myNex.writeNum("cps", pump.cps());
+  myNex.writeNum("cps", cps);
 
   #ifdef NO_PHYSICAL_BUTTONS
   myNex.writeNum("physicalButtons", 0);
   #endif
-  
+
   // USART_CH1.println("Init step 6");
 }
 
@@ -366,7 +380,7 @@ void sensorsRead() { // Reading the thermocouple temperature
       #else
         currentWeight = LoadCell_1.get_units() + LoadCell_2.get_units();
       #endif
-      
+
       scalesTimer = getNextMillis(GET_SCALES_READ_EVERY);
     }
   }
@@ -394,7 +408,7 @@ bool stopOnWeight() {
       if (weightTargetHit || (currentWeight + .5f) >= weightTarget) {
         weightTargetHit = true;
         return true;
-      } 
+      }
     }
   }
   return false;
@@ -415,7 +429,7 @@ bool stopOnWeight() {
   void adcISR() {
     if (adcInitialized) {
       adcData[adcIndex] = ADCH;
-      
+
       if (adcIndex == 1) {
         adc1Data[adc1Index] = adcData[1];
 
@@ -436,7 +450,7 @@ bool stopOnWeight() {
     }
   }
 
-  void initPressure() {
+  void initADC() {
     ADMUX =  (1 << REFS0) | (1 << ADLAR) | 0b00001111;
     ADCSRB = (1 << ACME);
     ADCSRA = (1 << ADEN) | (1 << ADSC) | (1 << ADATE) | (1 << ADPS1);
@@ -458,7 +472,7 @@ bool stopOnWeight() {
 
     adcInitialized = true;
   }
-  
+
   void onPSMInterrupt() {
     adcISR();
   }
@@ -716,7 +730,7 @@ void trigger1() {
         ppStartBar = myNex.readNumber("ppStart");
         EEPROM.put(EEP_P_START, ppStartBar);
         allValuesUpdated++;
-        
+
         ppFinishBar = myNex.readNumber("ppFin");
         EEPROM.put(EEP_P_FINISH, ppFinishBar);
         allValuesUpdated++;
@@ -774,7 +788,7 @@ void trigger1() {
         brewDeltaActive = myNex.readNumber("deltaState");
         EEPROM.put(EEP_BREW_DELTA, brewDeltaActive);
         allValuesUpdated++;
-        
+
         if (allValuesUpdated == 3) {
           allValuesUpdated=0;
           myNex.writeStr("popupMSG.t0.txt","UPDATE SUCCESSFUL!");
@@ -786,7 +800,7 @@ void trigger1() {
         weightTarget = myNex.readNumber("weightTarget") / 10.f;
         EEPROM.put(EEP_SHOT_TARGET_WEIGHT, weightTarget);
         allValuesUpdated++;
-        
+
         if (allValuesUpdated == 1) {
           allValuesUpdated=0;
           myNex.writeStr("popupMSG.t0.txt","UPDATE SUCCESSFUL!");
@@ -945,7 +959,7 @@ void trigger14() {
 //#############################################################################################
 
 //Function to get the state of the brew switch button
-bool brewState() {  
+bool brewState() {
   if (selectedOperationalMode <= 4 && brewUntil > millis()) {
     return true;
   }
@@ -1174,9 +1188,9 @@ void brewDetect() {
         currentWeight = 0.f;
         previousWeight = 0.f;
       }
-    }    
+    }
   }
-  bool stoppedOnWeight = stopOnWeight();  
+  bool stoppedOnWeight = stopOnWeight();
   if (brewActive && scalesPresent && stoppedOnWeight) {
     myNex.writeNum("finalWeight", currentWeight > 0.f ? int(currentWeight * 10) : 0);
   }
@@ -1196,10 +1210,10 @@ void brewDetect() {
       brewTimer(1); // starting the timer
     }
     brewActive = true;
-  } else {    
+  } else {
     pump.set(0);
     digitalWrite(valvePin, LOW);
-    brewTimer(bState ? 2 : 0); // stopping timer    
+    brewTimer(bState ? 2 : 0); // stopping timer
     brewActive = false;
     if (!bState) {
       weightTargetHit = false;
@@ -1278,7 +1292,7 @@ void eepromInit() {
     setDefaultValues();
 
     valuesWriteToEEPROM();
-    
+
     EEPROM.put(EEP_HOME_ON_SHOT_FINISH, 1);
     EEPROM.put(EEP_GRAPH_BREW, 1);
 
@@ -1342,7 +1356,7 @@ void valuesLoadFromEEPROM() {
   EEPROM.get(EEP_HPWR, HPWR);//reading HPWR value from eeprom
   EEPROM.get(EEP_M_DIVIDER, MainCycleDivider);//reading main cycle div from eeprom
   EEPROM.get(EEP_B_DIVIDER, BrewCycleDivider);//reading brew cycle div from eeprom
-  
+
   EEPROM.get(EEP_PREINFUSION, preinfusionState);//reading preinfusion checkbox value from eeprom
   EEPROM.get(EEP_PREINFUSION_SEC, preinfuseTime);//reading preinfusion time value from eeprom
   EEPROM.get(EEP_PREINFUSION_BAR, preinfuseBar);//reading preinfusion pressure value from eeprom
@@ -1369,10 +1383,10 @@ void valuesLoadFromEEPROM() {
 
   // Warmup checkbox value
   EEPROM.get(EEP_WARMUP, warmupEnabled);//reading preinfusion pressure value from eeprom
-  
+
   // Scales values
   EEPROM.get(EEP_SCALES_F1, scalesF1);//reading scale factors value from eeprom
-  EEPROM.get(EEP_SCALES_F2, scalesF2);//reading scale factors value from eeprom  
+  EEPROM.get(EEP_SCALES_F2, scalesF2);//reading scale factors value from eeprom
 
   EEPROM.get(EEP_SHOT_TARGET_WEIGHT, weightTarget);
 }
@@ -1397,6 +1411,15 @@ void valuesWriteToEEPROM() {
     EEPROM.put(EEP_SCALES_F2, scalesF2);
     EEPROM.put(EEP_BREW_DELTA, brewDeltaActive);
     EEPROM.put(EEP_SHOT_TARGET_WEIGHT, weightTarget);
+}
+
+void lcdShowPopup(const char *msg) {
+  static unsigned int lcdPopupTimer;
+  if (lcdPopupTimer < millis()) {
+    myNex.writeStr("popupMSG.t0.txt", msg);
+    myNex.writeStr("page popupMSG");
+    lcdPopupTimer = millis() + 1000u;
+  }
 }
 
 void ads1115Init() {
