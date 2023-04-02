@@ -45,7 +45,7 @@
   #define USART_LCD Serial
 
   #if defined(ADCINTERRUPT_ENABLED)
-    void initPressure();
+    void initADC();
     void adcISR();
   #endif
 #elif defined(ARDUINO_ARCH_STM32_V1) // if arch is stm32
@@ -270,6 +270,12 @@ void setup() {
 
   digitalWrite(valvePin, LOW);
 
+  unsigned int cps = pump.cps();
+
+  if (cps > 80u) {
+    pump.setDivider(2);
+  }
+
 #ifdef KC9ZDA_NCP5623_H
   tankLED.begin();
   tankLED.setColor(255, 255, 255);
@@ -282,6 +288,21 @@ void setup() {
   tankSensorPresent = vl53l0x_init();
 #endif
 
+#if defined(ARDUINO_ARCH_AVR) && defined(ADCINTERRUPT_ENABLED)
+  initADC();
+  delay(100);
+#endif
+
+  while (brewState()) {
+    lcdShowPopup("Brew Switch ON!");
+    delay(0);
+  }
+
+  while (steamState()) {
+    lcdShowPopup("Steam Switch ON!");
+    delay(0);
+  }
+
   // USART_CH1.println("Init step 4");
   // Will wait hereuntil full serial is established, this is done so the LCD fully initializes before passing the EEPROM values
   while (myNex.readNumber("safetyTempCheck") != 100) {
@@ -291,11 +312,6 @@ void setup() {
   // USART_CH1.println("Init step 5");
   // Initialising the vsaved values or writing defaults if first start
   eepromInit();
-
-#if defined(ARDUINO_ARCH_AVR) && defined(ADCINTERRUPT_ENABLED)
-  initPressure();
-  delay(100);
-#endif
 
 #if defined(ADAFRUIT_MAX31855_H)
   thermocouple.begin();
@@ -307,12 +323,6 @@ void setup() {
   myNex.writeNum("scalesPresent", scalesPresent ? 1 : 0);
 
   myNex.lastCurrentPageId = -1;
-
-  unsigned int cps = pump.cps();
-
-  if (cps > 80u) {
-    pump.setDivider(2);
-  }
 
   myNex.writeNum("cps", cps);
 
@@ -503,7 +513,7 @@ void adcISR() {
   }
 }
 
-void initPressure() {
+void initADC() {
   ADMUX = (1 << REFS0) | (1 << ADLAR) | 0b00001111;
   ADCSRB = (1 << ACME);
   ADCSRA = (1 << ADEN) | (1 << ADSC) | (1 << ADATE) | (1 << ADPS1);
@@ -1530,6 +1540,15 @@ void valuesWriteToEEPROM() {
   EEPROM.put(EEP_SCALES_F2, scalesF2);
   EEPROM.put(EEP_BREW_DELTA, brewDeltaActive);
   EEPROM.put(EEP_SHOT_TARGET_WEIGHT, weightTarget);
+}
+
+void lcdShowPopup(const char *msg) {
+  static unsigned int lcdPopupTimer;
+  if (lcdPopupTimer < millis()) {
+    myNex.writeStr("popupMSG.t0.txt", msg);
+    myNex.writeStr("page popupMSG");
+    lcdPopupTimer = millis() + 1000u;
+  }
 }
 
 void ads1115Init() {
