@@ -31,14 +31,14 @@ void pumpInit(const int powerLineFrequency, const float pumpFlowAtZero) {
 }
 
 // Function that returns the percentage of clicks the pump makes in it's current phase
-inline float getPumpPct(const float targetPressure, const float flowRestriction, const SensorState &currentState) {
+inline float getPumpPct(const float targetPressure, const float flowRestriction, const SensorState& currentState) {
   if (targetPressure == 0.f) {
-      return 0.f;
+    return 0.f;
   }
 
   float diff = targetPressure - currentState.smoothedPressure;
-  float maxPumpPct = flowRestriction <= 0.f ? 1.f : getClicksPerSecondForFlow(flowRestriction, currentState.smoothedPressure) / (float) maxPumpClicksPerSecond;
-  float pumpPctToMaintainFlow = getClicksPerSecondForFlow(currentState.smoothedPumpFlow, currentState.smoothedPressure) / (float) maxPumpClicksPerSecond;
+  float maxPumpPct = flowRestriction <= 0.f ? 1.f : getClicksPerSecondForFlow(flowRestriction, currentState.smoothedPressure) / (float)maxPumpClicksPerSecond;
+  float pumpPctToMaintainFlow = getClicksPerSecondForFlow(currentState.smoothedPumpFlow, currentState.smoothedPressure) / (float)maxPumpClicksPerSecond;
 
   if (diff > 2.f) {
     return fminf(maxPumpPct, 0.25f + 0.2f * diff);
@@ -60,7 +60,7 @@ inline float getPumpPct(const float targetPressure, const float flowRestriction,
 // - expected target
 // - flow
 // - pressure direction
-void setPumpPressure(const float targetPressure, const float flowRestriction, const SensorState &currentState) {
+void setPumpPressure(const float targetPressure, const float flowRestriction, const SensorState& currentState) {
   float pumpPct = getPumpPct(targetPressure, flowRestriction, currentState);
   setPumpToRawValue((uint8_t)(pumpPct * PUMP_RANGE));
 }
@@ -85,8 +85,16 @@ long getAndResetClickCounter(void) {
 
 int getCPS(void) {
   unsigned int cps = pump.cps();
+
+  unsigned long syncDelay = pump.getLastMillis() + 100u;
+  while (millis() < syncDelay) { delay(0); }
+
   if (cps > 80u) {
     pump.setDivider(2);
+    pump.initTimer(cps > 110u ? 60u : 50u);
+  }
+  else {
+    pump.initTimer(cps > 55u ? 60u : 50u);
   }
   return cps;
 }
@@ -99,7 +107,7 @@ void pumpPhaseShift(void) {
 // plotted: https://www.desmos.com/calculator/eqynzclagu
 float getPumpFlowPerClick(const float pressure) {
   float fpc = 0.f;
-  fpc = (pressureInefficiencyCoefficient[5] / pressure + pressureInefficiencyCoefficient[6]) * ( -pressure * pressure ) + ( flowPerClickAtZeroBar - pressureInefficiencyCoefficient[0]) - (pressureInefficiencyCoefficient[1] + (pressureInefficiencyCoefficient[2] - (pressureInefficiencyCoefficient[3] - pressureInefficiencyCoefficient[4] * pressure) * pressure) * pressure) * pressure;
+  fpc = (pressureInefficiencyCoefficient[5] / pressure + pressureInefficiencyCoefficient[6]) * (-pressure * pressure) + (flowPerClickAtZeroBar - pressureInefficiencyCoefficient[0]) - (pressureInefficiencyCoefficient[1] + (pressureInefficiencyCoefficient[2] - (pressureInefficiencyCoefficient[3] - pressureInefficiencyCoefficient[4] * pressure) * pressure) * pressure) * pressure;
   return fpc * fpc_multiplier;
 }
 
@@ -117,7 +125,7 @@ float getClicksPerSecondForFlow(const float flow, const float pressure) {
 }
 
 // Calculates pump percentage for the requested flow and updates the pump raw value
-void setPumpFlow(const float targetFlow, const float pressureRestriction, const SensorState &currentState) {
+void setPumpFlow(const float targetFlow, const float pressureRestriction, const SensorState& currentState) {
   // If a pressure restriction exists then the we go into pressure profile with a flowRestriction
   // which is equivalent but will achieve smoother pressure management
   if (pressureRestriction > 0.f && currentState.smoothedPressure > pressureRestriction * 0.5f) {
