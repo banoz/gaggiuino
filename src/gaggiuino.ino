@@ -424,7 +424,7 @@ void lcdSaveSettingsTrigger(void) {
       eepromCurrentValues.brewDivider                   = lcdValues.brewDivider;
       break;
     case SCREEN_MODES::SCREEN_settings_system:
-      eepromCurrentValues.powerLineFrequency            = lcdValues.powerLineFrequency;
+      //eepromCurrentValues.powerLineFrequency            = lcdValues.powerLineFrequency;
       eepromCurrentValues.lcdSleep                      = lcdValues.lcdSleep;
       eepromCurrentValues.scalesF1                      = lcdValues.scalesF1;
       eepromCurrentValues.scalesF2                      = lcdValues.scalesF2;
@@ -446,6 +446,8 @@ void lcdSaveSettingsTrigger(void) {
   } else {
     lcdShowPopup("Data out of range!");
   }
+
+  pumpInit(eepromCurrentValues.powerLineFrequency, eepromCurrentValues.pumpFlowAtZero);
 }
 
 void lcdScalesTareTrigger(void) {
@@ -831,6 +833,7 @@ static void cpsInit(eepromValues_t &eepromValues) {
 }
 
 static void calibratePump(void) {
+  systemState.pumpCalibrationFinished = true;
   if (systemState.pumpCalibrationFinished) {
     return;
   }
