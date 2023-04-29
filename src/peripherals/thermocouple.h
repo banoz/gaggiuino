@@ -18,4 +18,8 @@ static inline void thermocoupleInit(void) {
 #endif
 }
 
+static inline float thermocoupleRead(void) {
+  return thermocouple.readCelsius();
+}
+
 #endif
