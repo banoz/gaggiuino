@@ -672,19 +672,37 @@ void justDoCoffee() {
 //#############################################################################################
 
 void steamCtrl() {
-
-  if (!brewActive) {
-    if (livePressure <= 6.f) { // steam temp control, needs to be aggressive to keep steam pressure acceptable
-      if ((kProbeReadValue > setPoint-10.f) && (kProbeReadValue <= 155.f)) setBoiler(HIGH);
-      else setBoiler(LOW);
-    } else setBoiler(LOW);
-  } else if (brewActive) { //added to cater for hot water from steam wand functionality
-    if ((kProbeReadValue > setPoint-10.f) && (kProbeReadValue <= 105.f)) {
-      setBoiler(HIGH);
-    } else {
-      setBoiler(LOW);
+  if (livePressure > 6.f || kProbeReadValue < setPoint - 10.f || kProbeReadValue > 175.f) {
+    setBoiler(LOW);
+    pump.set(0);
+  }
+  else {
+    if (brewActive) { // added to cater for hot water from steam wand functionality
+      if (kProbeReadValue < setPoint) {
+        setBoiler(HIGH);
+      }
+      else {
+        setBoiler(LOW);
+      }
     }
-  } else setBoiler(LOW);
+    else { // steam temp control, needs to be aggressive to keep steam pressure acceptable
+      if (kProbeReadValue < 155.f) {
+        setBoiler(HIGH);
+      }
+      else {
+        setBoiler(LOW);
+      }
+
+#ifndef DREAM_STEAM_DISABLED // disabled for bigger boilers which have no  need of adjusting the pressure
+      if (livePressure < 1.8f) {
+        pump.set(3);
+      }
+      else {
+        pump.set(0);
+      }
+#endif
+    }
+  }
 }
 
 //#############################################################################################
@@ -1413,7 +1431,7 @@ void valuesWriteToEEPROM() {
     EEPROM.put(EEP_SHOT_TARGET_WEIGHT, weightTarget);
 }
 
-void lcdShowPopup(const char *msg) {
+void lcdShowPopup(const char* msg) {
   static unsigned int lcdPopupTimer;
   if (lcdPopupTimer < millis()) {
     myNex.writeStr("popupMSG.t0.txt", msg);
