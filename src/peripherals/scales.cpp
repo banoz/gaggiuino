@@ -5,7 +5,7 @@ namespace {
   class LoadCellSingleton {
   public:
     static HX711_2& getInstance() {
-      static HX711_2 instance;
+      static HX711_2 instance(TIM3);
       return instance;
     }
   private:
@@ -13,7 +13,6 @@ namespace {
     ~LoadCellSingleton() = default;
   };
 }
-
 
 bool scalesPresent = {};
 
@@ -28,9 +27,8 @@ void scalesInit(float scalesF1, float scalesF2) {
   loadCells.begin(HX711_dout_1, HX711_dout_2, HX711_sck_1, 128, scale_clk);
   loadCells.set_scale(scalesF1, scalesF2);
   loadCells.power_up();
-  delay(150);
 
-  if (loadCells.wait_ready_timeout(1000, 0)) {
+  if (loadCells.wait_ready_timeout(200, 10)) {
     loadCells.tare(4);
     scalesPresent = true;
   }
@@ -43,7 +41,7 @@ void scalesInit(float scalesF1, float scalesF2) {
 
 void scalesTare(void) {
   auto& loadCells = LoadCellSingleton::getInstance();
-  if (loadCells.wait_ready_timeout(150, 0)) {
+  if (loadCells.wait_ready_timeout(150, 10)) {
     loadCells.tare(4);
   }
 }
@@ -51,7 +49,7 @@ void scalesTare(void) {
 float scalesGetWeight(void) {
   float currentWeight = 0.f;
   auto& loadCells = LoadCellSingleton::getInstance();
-  if (loadCells.wait_ready_timeout(150, 0)) {
+  if (loadCells.wait_ready_timeout(150, 10)) {
     float values[2];
     loadCells.get_units(values);
     currentWeight = values[0] + values[1];
