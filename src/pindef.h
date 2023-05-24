@@ -2,6 +2,37 @@
 #ifndef PINDEF_H
 #define PINDEF_H
 
+#ifdef PCBV1
+
+#define thermoDO      PB14
+#define thermoDI      PB15 // not used
+#define thermoCS      PB12
+#define thermoCLK     PB13
+
+#define zcPin         PA0
+#define brewPin       PB1
+#define relayPin      PA6
+#define dimmerPin     PB8
+#define steamPin      PB0
+#define valvePin      PC15
+#define waterPin      PA12
+
+#define steamValveRelayPin PC14
+#define steamBoilerRelayPin PC13
+
+#define HX711_sck_1   PA1
+#define HX711_dout_1  PA2
+#define HX711_dout_2  PA3
+
+#define USART_LCD     Serial1 // PA9(TX) & PA10(RX)
+#define USART_ESP     Serial2 // PA11(TX) & PA12(RX)
+#define USART_DEBUG   Serial  // USB-CDC (Takes PA8,PA9,PA10,PA11)
+
+#define hw_SCL        PB10
+#define hw_SDA        PB3
+
+#else
+
 // STM32F4 pins definitions
 #define thermoDO      PB4
 #define thermoDI      PA7 // not used
@@ -33,5 +64,9 @@
 
 #define hw_SCL        PB6
 #define hw_SDA        PB7
+
+#endif
+
+
 
 #endif
