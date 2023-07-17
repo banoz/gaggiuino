@@ -39,7 +39,7 @@ void scalesInit(float scalesF1, float scalesF2) {
   loadCells.power_up();
 
   if (loadCells.wait_ready_timeout(1000, 10)) {
-    loadCells.tare(4);
+    loadCells.tare();
     hwScalesPresent = true;
   }
   else {
@@ -56,7 +56,7 @@ void scalesTare(void) {
   if (hwScalesPresent) {
     auto& loadCells = LoadCellSingleton::getInstance();
     if (loadCells.wait_ready_timeout(150, 10)) {
-      loadCells.tare(4);
+      loadCells.tare();
     }
   }
   else if (remoteScalesIsPresent()) {
