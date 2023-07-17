@@ -97,6 +97,10 @@ void setup(void) {
   // Change LED colour on setup exit.
   led.setColor(9u, 0u, 9u); // 64171
 
+#ifdef TWI_CONTROLS
+  twiControlsInit();
+#endif
+
   iwdcInit();
 }
 
@@ -136,9 +140,13 @@ static void sensorsRead(void) {
 }
 
 static void sensorReadSwitches(void) {
+#ifdef TWI_CONTROLS
+  twiControlsRead(currentState);
+#else
   currentState.brewSwitchState = brewState();
   currentState.steamSwitchState = steamState();
   currentState.hotWaterSwitchState = waterPinState() || (currentState.brewSwitchState && currentState.steamSwitchState); // use either an actual switch, or the GC/GCP switch combo
+#endif
 }
 
 static void sensorsReadTemperature(void) {
