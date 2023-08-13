@@ -3,6 +3,7 @@
 #define SENSORS_STATE_H
 
 struct SensorState {
+  bool powerSwitchState;
   bool brewSwitchState;
   bool steamSwitchState;
   bool hotWaterSwitchState;
