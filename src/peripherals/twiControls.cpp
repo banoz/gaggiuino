@@ -4,48 +4,37 @@
 TwoWire twiControlWire(PB3, PB10);
 
 uint8_t ledStateWithParity(const uint8_t);
-void twiControlsCheckButtonState(const uint8_t, const twiControls, volatile uint8_t&, volatile uint8_t&);
+bool twiControlsCheckButtonState(const uint8_t, const twiControls);
 
 void twiControlsInit(void) {
   twiControlWire.begin();
 }
 
-volatile uint8_t twiControlsButtonState = 0;
-volatile uint8_t twiControlsLastButtonState = 0;
-volatile uint8_t twiControlsButtonStateEx = 0;
-volatile uint8_t twiControlsLastButtonStateEx = 0;
-
 volatile uint8_t activeBrewButton = 0;
 
+volatile bool currentButtonState[4] = { false };
+volatile bool lastButtonState[4] = { false };
+
 void twiControlsRead(SensorState& currentState) {
-
   twiControlWire.requestFrom(0x00, 1, 0x01, 1, true);
-
   uint8_t buttonState = twiControlWire.read();
 
-  twiControlsCheckButtonState(buttonState, ONECUP, twiControlsButtonState, twiControlsLastButtonState);
-  twiControlsCheckButtonState(buttonState, TWOCUP, twiControlsButtonState, twiControlsLastButtonState);
-  twiControlsCheckButtonState(buttonState, MANUAL, twiControlsButtonState, twiControlsLastButtonState);
-  twiControlsCheckButtonState(buttonState, WATER, twiControlsButtonState, twiControlsLastButtonState);
+  activeBrewButton = 0;
+  activeBrewButton |= twiControlsCheckButtonState(buttonState, ONECUP) << 0;
+  activeBrewButton |= twiControlsCheckButtonState(buttonState, TWOCUP) << 1;
+#ifndef TWI_CONTROLS_EX
+  activeBrewButton |= twiControlsCheckButtonState(buttonState, MANUAL) << 2;
+  currentState.hotWaterSwitchState = twiControlsCheckButtonState(buttonState, WATER);
+#endif
+  currentState.brewSwitchState = activeBrewButton > 0;
 
 #ifdef TWI_CONTROLS_EX
   twiControlWire.requestFrom(0x00, 1, 0x02, 1, true);
+  uint8_t buttonStateEx = twiControlWire.read() << 4;
 
-  uint8_t buttonStateEx = twiControlWire.read();
-
-  buttonStateEx = buttonStateEx << 4;
-
-  twiControlsCheckButtonState(buttonStateEx, STEAM, twiControlsButtonStateEx, twiControlsLastButtonStateEx);
-  twiControlsCheckButtonState(buttonStateEx, POWER, twiControlsButtonStateEx, twiControlsLastButtonStateEx);
-
-  currentState.steamSwitchState = twiControlsButtonStateEx & STEAM;
-  currentState.powerSwitchState = twiControlsButtonStateEx & POWER;
+  currentState.steamSwitchState = twiControlsCheckButtonState(buttonStateEx, STEAM);
+  currentState.powerSwitchState = twiControlsCheckButtonState(buttonStateEx, POWER);
 #endif
-
-  activeBrewButton = twiControlsButtonState & 0x07u;
-
-  currentState.brewSwitchState = twiControlsButtonState & 0x07u;
-  currentState.hotWaterSwitchState = twiControlsButtonState & WATER;
 
   uint8_t ledState = 0;
   uint8_t ledStateEx = 0;
@@ -123,19 +112,34 @@ uint8_t ledStateWithParity(const uint8_t ledState) {
   return result;
 }
 
-void twiControlsCheckButtonState(const uint8_t state, const twiControls mask, volatile uint8_t& currentState, volatile uint8_t& lastState) {
+int maskToIdx(const twiControls mask) {
+  if (mask == twiControls::ONECUP) { return 0; }
+  if (mask == twiControls::TWOCUP) { return 1; }
+  #ifndef TWI_CONTROLS_EX
+  if (mask == twiControls::MANUAL) { return 2; }
+  if (mask == twiControls::WATER) { return 3; }
+  #else
+  if (mask == twiControls::STEAM) { return 2; }
+  if (mask == twiControls::POWER) { return 3; }
+  #endif
+  return -1;
+}
+
+bool twiControlsCheckButtonState(const uint8_t state, const twiControls mask) {
+  int idx = maskToIdx(mask);
   if (state & mask) {
-    lastState |= mask;
+    lastButtonState[idx] = true;
   }
   else {
-    if (lastState & mask) {
-      if (currentState & mask) {
-        currentState &= ~mask;
+    if (lastButtonState[idx]) {
+      if (currentButtonState[idx]) {
+        currentButtonState[idx] = false;
       }
       else {
-        currentState |= mask;
+        currentButtonState[idx] = true;
       }
-      lastState &= ~mask;
+      lastButtonState[idx] = false;
     }
   }
+  return currentButtonState[idx];
 }
