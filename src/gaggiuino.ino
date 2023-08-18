@@ -257,9 +257,10 @@ static void readTankWaterLevel(void) {
   if (lcdCurrentPageId == NextionPage::Home) {
     // static uint32_t tof_timeout = millis();
     // if (millis() >= tof_timeout) {
-    currentState.waterLvl = tof.readLvl();
+    //currentState.waterLvl = tof.readLvl();
       // tof_timeout = millis() + 500;
     // }
+    currentState.waterLvl = waterPinState() ? 95u : 5u;
   }
 }
 
@@ -417,6 +418,7 @@ void tryEepromWrite(const eepromValues_t &eepromValues) {
   watchdogReload(); // reload the watchdog timer on expensive operations
   if (success) {
     lcdShowPopup("Update successful!");
+    pumpInit(runningCfg.powerLineFrequency, runningCfg.pumpFlowAtZero);
   } else {
     lcdShowPopup("Data out of range!");
   }
