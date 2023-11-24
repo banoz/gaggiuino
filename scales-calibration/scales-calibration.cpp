@@ -62,7 +62,7 @@ volatile float rf = 4000.f; //-7050 worked for my 440lb max scale setup
 volatile int cps, adc;
 volatile float lw, rw, p, f, pz = 24.01f, temp;
 volatile float smoothedPumpFlow, smoothedPressure, previousSmoothedPressure, pressureChangeSpeed;
-volatile int pumpFlowValue = 100, timerValue = 10, threeWayValveValue = 0;
+volatile int pumpDelay = 50, pumpDivider = 1, pumpFlowValue = 100, timerValue = 10, threeWayValveValue = 0;
 volatile unsigned long pumpUntil = 0;
 volatile bool pumpFlow;
 
@@ -119,12 +119,16 @@ void setup() {
   USART_DEBUG.println(cps);
 
   if (cps > 80u) {
-    pump.setDivider(2);
-    pump.initTimer(cps > 110u ? 60u : 50u, TIM9);
+    pumpDelay = cps > 110u ? 60u : 50u;
+    pumpDivider = 2;
   }
   else {
-    pump.initTimer(cps > 55u ? 60u : 50u, TIM9);
+    pumpDelay = cps > 55u ? 60u : 50u;
+    pumpDivider = 1;
   }
+
+  pump.setDivider(pumpDivider);
+  pump.initTimer(pumpDelay, TIM9);
 
   USART_DEBUG.println("Initialized!");
 }
@@ -169,7 +173,6 @@ void loop() {
   }
 
   if (millis() > displayTimer) {
-
     myNex.writeNum("cps", cps);
     myNex.writeNum("adc", adc);
     myNex.writeNum("tc", (int)roundf(temp * 10.f));
@@ -184,6 +187,8 @@ void loop() {
     myNex.writeNum("pr", (int)roundf(p * 10.f));
     myNex.writeNum("fl", (int)roundf(f * 10.f));
     myNex.writeNum("pz", (int)roundf(pz * 100.f));
+    myNex.writeNum("pd", pumpDelay);
+    myNex.writeNum("di", pumpDivider);
     myNex.writeNum("pf", pumpFlowValue);
     myNex.writeNum("pt", timerValue);
 
@@ -396,4 +401,21 @@ void trigger8() { // 3WV
 
 void trigger9() { // Pump
   pumpUntil = millis() + myNex.readByte() * 1000;
+}
+
+void trigger10() { // Pump delay
+  uint8_t b0 = (uint8_t)myNex.readByte();
+  uint8_t b1 = (uint8_t)myNex.readByte();
+  int b2 = (uint16_t)((b1 << 8) | b0);
+  pumpDelay = b2;
+  pump.initTimer(pumpDelay);
+}
+
+void trigger11() { // Pump divider
+  pumpDivider = myNex.readByte();
+  pump.setDivider(pumpDivider);
+}
+
+void trigger12() { // Pump shift
+  pump.shiftDividerCounter();
 }
