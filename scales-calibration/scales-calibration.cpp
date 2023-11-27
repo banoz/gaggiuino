@@ -84,6 +84,8 @@ void setup() {
   pinMode(valvePin, OUTPUT);
   digitalWrite(valvePin, LOW);
 
+  pump.set(0);
+
   pinMode(brewPin, INPUT_PULLUP);
   pinMode(steamPin, INPUT_PULLUP);
 
