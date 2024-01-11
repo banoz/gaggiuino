@@ -90,11 +90,19 @@ void setup() {
   pinMode(steamPin, INPUT_PULLUP);
 
   USART_DEBUG.begin(115200);
+  USART_DEBUG.println("Start!");
 
   myNex.begin(115200);
   myNex.writeStr("rest");
-  while (myNex.readNumber("initCheck") != 100) {
+
+  for (int i = 0; i < 20; i++) {
+    if (myNex.readNumber("initCheck") == 100) {
+      break;
+    }
     delay(600);
+    if (i >= 19) {
+      USART_DEBUG.println("No comms with Nextion");
+    }
   }
 
   USART_DEBUG.println("Init LC");
