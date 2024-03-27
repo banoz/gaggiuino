@@ -81,13 +81,13 @@ void steamCtrl(const eepromValues_t &runningCfg, SensorState &currentState) {
   float steamTempSetPoint = runningCfg.steamSetPoint + runningCfg.offsetTemp;
   float sensorTemperature = currentState.temperature + runningCfg.offsetTemp;
 
-  if (currentState.smoothedPressure > steamThreshold_ || sensorTemperature > steamTempSetPoint) {
+  if (currentState.smoothedPressure > steamThreshold_ || sensorTemperature > steamTempSetPoint + 10.f) {
     setBoilerOff();
     setSteamBoilerRelayOff();
     setSteamValveRelayOff();
     setPumpOff();
   } else {
-    if (sensorTemperature < steamTempSetPoint) {
+    if (sensorTemperature < steamTempSetPoint - 5.f) {
       setBoilerOn();
     } else {
       setBoilerOff();
@@ -112,6 +112,7 @@ void steamCtrl(const eepromValues_t &runningCfg, SensorState &currentState) {
 /*Water mode and all that*/
 void hotWaterMode(const SensorState &currentState) {
   closeValve();
+  setSteamValveRelayOn();
   setPumpToRawValue(80);
   setBoilerOn();
   if (currentState.temperature < MAX_WATER_TEMP) setBoilerOn();
