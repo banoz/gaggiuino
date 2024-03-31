@@ -242,7 +242,13 @@ void loop() {
     }
     else
     {
-      pump.set(pumpFlowValue);
+      if (cps > 0) {
+        pump.set(pumpFlowValue);
+      }
+      else
+      {
+        digitalWrite(dimmerPin, pumpFlowValue > 50 ? HIGH : LOW);
+      }
     }
   }
   else
